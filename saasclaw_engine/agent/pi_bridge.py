@@ -94,7 +94,7 @@ class PiBridge:
             if zai_url:
                 env["ZAI_BASE_URL"] = zai_url
         elif self.provider == "openai":
-            from studio.models import ProviderKey
+            from saasclaw_engine.studio_models.models import ProviderKey
             try:
                 pk = ProviderKey.objects.filter(provider="openai", is_active=True).latest("updated_at")
                 if pk.api_key:
@@ -102,7 +102,7 @@ class PiBridge:
             except ProviderKey.DoesNotExist:
                 pass
         elif self.provider == "anthropic":
-            from studio.models import ProviderKey
+            from saasclaw_engine.studio_models.models import ProviderKey
             try:
                 pk = ProviderKey.objects.filter(provider="anthropic", is_active=True).latest("updated_at")
                 if pk.api_key:

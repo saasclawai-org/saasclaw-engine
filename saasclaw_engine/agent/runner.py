@@ -89,7 +89,7 @@ def _provider_config(session_override: str = None, model_override: str = None, u
     user_key = None
     if user and provider != "local":
         try:
-            from studio.models import ProviderKey
+            from saasclaw_engine.studio_models.models import ProviderKey
             pk = ProviderKey.objects.filter(user=user, provider=provider, is_active=True).first()
             if pk and pk.api_key:
                 user_key = pk.api_key
@@ -334,7 +334,7 @@ def _patch_context_on_tool(project_id, tool_name, tool_args, tool_result):
     if tool_result.startswith("Error:"):
         return
     try:
-        from projects.models import Project
+        from saasclaw_engine.projects.models import Project
         project = Project.objects.get(id=project_id)
         if not project.context_cache:
             return
@@ -412,7 +412,7 @@ def _do_patch_context(project, tool_name, tool_args, tool_result):
         
         if patched != lines:
             project.context_cache = patched
-            from projects.models import Project
+            from saasclaw_engine.projects.models import Project
             Project.objects.filter(id=project.id).update(context_cache=patched)
     
     elif tool_name == "replace_in_file":
@@ -453,7 +453,7 @@ def _do_patch_context(project, tool_name, tool_args, tool_result):
         
         if patched != lines:
             project.context_cache = patched
-            from projects.models import Project
+            from saasclaw_engine.projects.models import Project
             Project.objects.filter(id=project.id).update(context_cache=patched)
 
 
@@ -581,7 +581,7 @@ def _patch_context_on_tool(project_id, tool_name, tool_args, tool_result):
     if tool_result.startswith("Error:"):
         return
     try:
-        from projects.models import Project
+        from saasclaw_engine.projects.models import Project
         project = Project.objects.get(id=project_id)
         if not project.context_cache:
             return
@@ -659,7 +659,7 @@ def _do_patch_context(project, tool_name, tool_args, tool_result):
         
         if patched != lines:
             project.context_cache = patched
-            from projects.models import Project
+            from saasclaw_engine.projects.models import Project
             Project.objects.filter(id=project.id).update(context_cache=patched)
     
     elif tool_name == "replace_in_file":
@@ -700,7 +700,7 @@ def _do_patch_context(project, tool_name, tool_args, tool_result):
         
         if patched != lines:
             project.context_cache = patched
-            from projects.models import Project
+            from saasclaw_engine.projects.models import Project
             Project.objects.filter(id=project.id).update(context_cache=patched)
 
 

@@ -342,9 +342,9 @@ def _deploy_project_tool(workspace_path: str, environment: str = "preview") -> s
     import json as _json
     
     try:
-        from projects.models import Project
-        from deployments.models import Environment
-        from studio.models import Workspace
+        from saasclaw_engine.projects.models import Project
+        from saasclaw_engine.deployments.models import Environment
+        from saasclaw_engine.studio_models.models import Workspace
         
         # Find the project from the workspace path
         ws = Workspace.objects.filter(local_path=workspace_path, is_active=True).first()
@@ -676,7 +676,7 @@ def get_env_vars(workspace_path: str) -> str:
         import os
         os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
         django.setup()
-        from deployments.models import EnvironmentVariable, Environment
+        from saasclaw_engine.deployments.models import EnvironmentVariable, Environment
         # Find environment by matching workspace path to project
         # workspace_path is like /srv/saasclaw/workspaces/<uuid>
         # The project slug appears in /srv/saasclaw/projects/<slug>/
@@ -760,8 +760,8 @@ def update_todos(workspace_path: str, items: list) -> str:
         import os
         os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
         django.setup()
-        from studio.models import Todo
-        from projects.models import Project
+        from saasclaw_engine.studio_models.models import Todo
+        from saasclaw_engine.projects.models import Project
         slug = _project_slug_from_workspace(workspace_path)
         if not slug:
             return "Could not determine project from workspace."

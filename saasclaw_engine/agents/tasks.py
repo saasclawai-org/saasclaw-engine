@@ -8,7 +8,7 @@ def run_preview_deploy_job(self, project_id: int, user_id: int | None = None) ->
     import logging, traceback
     logger = logging.getLogger(__name__)
     from django.contrib.auth import get_user_model
-    from projects.models import Project
+    from saasclaw_engine.projects.models import Project
 
     User = get_user_model()
     project = Project.objects.get(id=project_id)
@@ -24,7 +24,7 @@ def run_preview_deploy_job(self, project_id: int, user_id: int | None = None) ->
 @shared_task(bind=True)
 def run_production_deploy_job(self, project_id: int, user_id: int | None = None) -> int:
     from django.contrib.auth import get_user_model
-    from projects.models import Project
+    from saasclaw_engine.projects.models import Project
 
     User = get_user_model()
     project = Project.objects.get(id=project_id)
@@ -40,7 +40,7 @@ def cleanup_stale_sessions():
     django.setup()
     from django.utils import timezone
     from datetime import timedelta
-    from studio.models import AgentSession
+    from saasclaw_engine.studio_models.models import AgentSession
 
     cutoff = timezone.now() - timedelta(minutes=15)
     ended = AgentSession.objects.filter(

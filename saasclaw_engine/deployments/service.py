@@ -158,8 +158,8 @@ def _refresh_repo_checkout_for_deploy(project: Project, repo_path: Path, log_fil
         is_github = project.repo_provider == 'github' or 'github.com' in (project.repo_url or '')
         if is_github and project.repo_owner and project.repo_name:
             try:
-                from integrations.models import GitHubInstallation
-                from integrations.github import create_installation_access_token, _git_auth_args
+                from saasclaw_engine.integrations.models import GitHubInstallation
+                from saasclaw_engine.integrations.github import create_installation_access_token, _git_auth_args
                 inst = GitHubInstallation.objects.filter(
                     account_name=project.repo_owner
                 ).first() or GitHubInstallation.objects.first()
@@ -570,7 +570,7 @@ def _deploy_django_environment(project: Project, environment: Environment, deplo
         'POSTGRES_PORT': existing_env.get('POSTGRES_PORT') or '5432',
     })
     # Merge user-defined environment variables (override defaults)
-    from deployments.models import EnvironmentVariable
+    from saasclaw_engine.deployments.models import EnvironmentVariable
     for ev in EnvironmentVariable.objects.filter(environment=environment):
         env_values[ev.key] = ev.value
     env_text = _serialize_env_file(env_values)
@@ -970,7 +970,7 @@ def _deploy_node_ssr_environment(project: Project, environment: Environment, dep
     # Set PORT env for the app
     env_file = runtime_root / '.env'
     env_lines = [f'PORT={port}', f'NODE_ENV=production']
-    from deployments.models import EnvironmentVariable
+    from saasclaw_engine.deployments.models import EnvironmentVariable
     for ev in EnvironmentVariable.objects.filter(environment=environment):
         env_lines.append(f'{ev.key}={ev.value}')
     env_file.write_text('\n'.join(env_lines) + '\n', encoding='utf-8')
@@ -1070,7 +1070,7 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
     })
 
     # Merge user-defined environment variables
-    from deployments.models import EnvironmentVariable
+    from saasclaw_engine.deployments.models import EnvironmentVariable
     for ev in EnvironmentVariable.objects.filter(environment=environment):
         env_values[ev.key] = ev.value
 
