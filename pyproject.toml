@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "saasclaw-engine"
+version = "0.1.0"
+description = "AI-powered app build, deploy, and agent engine for SaaSClaw"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.11"
+authors = [
+    { name = "Norman Moore", email = "normandmickey@gmail.com" },
+]
+keywords = ["ai", "agent", "deploy", "saasclaw"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Django",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+    "django>=5.0",
+    "celery[redis]>=5.3",
+    "redis>=5.0",
+    "psycopg[binary]>=3.1",
+    "requests>=2.31",
+    "PyJWT>=2.8",
+    "cryptography>=41.0",
+    "chromadb>=0.4",
+    "httpx>=0.25",
+]
+
+[project.urls]
+Homepage = "https://saasclaw.ai"
+Repository = "https://github.com/normandmickey/saasclaw-engine"
+Issues = "https://github.com/normandmickey/saasclaw-engine/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["saasclaw_engine*"]
