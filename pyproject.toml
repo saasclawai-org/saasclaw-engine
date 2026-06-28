@@ -41,3 +41,11 @@ Issues = "https://github.com/normandmickey/saasclaw-engine/issues"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["saasclaw_engine*"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "saasclaw_engine.test_settings"
+python_files = ["test_*.py"]
+addopts = "-v"
+markers = [
+    "django_db: marks tests that need database access",
+]
