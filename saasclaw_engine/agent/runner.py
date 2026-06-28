@@ -44,6 +44,7 @@ def clear_agent_activity(session_id: str):
 
 from . import tools as agent_tools
 
+from .pii_guard import sanitize_messages
 logger = logging.getLogger(__name__)
 
 # Approximate pricing per 1M tokens (USD)
@@ -1382,6 +1383,12 @@ def run_agent(
         _trim_context(messages)
         if session_id:
             set_agent_activity(session_id, "Thinking…" if round_num == 0 else "Figuring out next step…", tool_call_count)
+
+        # Sanitize messages before sending to LLM (redact PII)
+        messages, _pii_redactions = sanitize_messages(messages)
+        if _pii_redactions:
+            logger.warning("PII redacted %d pattern(s) before LLM call in round %d", len(_pii_redactions), round_num)
+
         result = _call_llm(messages, tools, provider=provider, model=model, user=user)
 
         content = result["content"]
