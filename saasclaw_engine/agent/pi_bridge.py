@@ -16,6 +16,8 @@ import json
 import logging
 import os
 import subprocess
+
+from .pii_guard import sanitize_for_llm
 import sys
 import threading
 from typing import Generator, Optional
@@ -212,9 +214,15 @@ class PiBridge:
             return
 
         prompt_id = "prompt_1"
+
+        # Sanitize user message before sending to Pi
+        clean_message, _redactions = sanitize_for_llm(message)
+        if _redactions:
+            _log.warning("PII redacted %d pattern(s) from PiBridge message", len(_redactions))
+
         self._send_command({
             "type": "prompt",
-            "message": message,
+            "message": clean_message,
             "id": prompt_id,
         })
 
@@ -272,7 +280,10 @@ class PiBridge:
         """Steer the running agent with additional guidance."""
         if not self._process or self._process.poll() is not None:
             return
-        self._send_command({"type": "steer", "message": message})
+        clean_message, _redactions = sanitize_for_llm(message)
+        if _redactions:
+            _log.warning("PII redacted %d pattern(s) from PiBridge steer", len(_redactions))
+        self._send_command({"type": "steer", "message": clean_message})
 
     def abort(self) -> None:
         """Abort the current agent turn."""
@@ -324,6 +335,10 @@ def run_pi_message(
     thinking: str = "off",
 ) -> Generator[dict, None, None]:
     """Convenience function: run Pi and yield events."""
+    # Sanitize user message before passing to Pi
+    message, _redactions = sanitize_for_llm(message)
+    if _redactions:
+        _log.warning("PII redacted %d pattern(s) from run_pi_message", len(_redactions))
     bridge = PiBridge(
         working_dir=working_dir,
         provider=provider,
