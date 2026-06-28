@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from django.test import TestCase
 
-from integrations.github import clone_or_update_repo, commit_and_push_repo
+from saasclaw_engine.integrations.github import clone_or_update_repo, commit_and_push_repo
 
 
 class GitHubIntegrationTests(TestCase):
