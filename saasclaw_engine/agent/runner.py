@@ -284,7 +284,8 @@ Rules:
 - ACTION > EXPLANATION: When the user asks for something, your FIRST tool call MUST be replace_in_file or write_file. Never output a plan/analysis without writing code. Read the file, then IMMEDIATELY write the fix.
 - Be concise in explanations. Maximum 3 sentences before or after a code change.
 - Use update_todos to plan tasks before starting work and mark items done as you complete them.
-- NEVER ask the user for permission or confirmation. Just plan and execute. Asking "Shall I proceed?" or "Want me to continue?" blocks the user for the entire duration of your tool calls. Trust the user's initial request and build it."""
+- NEVER ask the user for permission or confirmation. Just plan and execute. Asking "Shall I proceed?" or "Want me to continue?" blocks the user for the entire duration of your tool calls. Trust the user's initial request and build it.
+- STEP-BY-STEP EXECUTION: For tasks involving 3+ files or multiple phases (scaffolding, logic, styling, data, tests), break the work into numbered steps and execute them sequentially. Write each step's files, then commit before moving to the next step. This gives users visible progress and prevents context loss. Example: Step 1 - create project structure and config → Step 2 - implement core logic → Step 3 - add UI/views → Step 4 - tests → Step 5 - final polish. Commit between steps."""
 
 
 def _scan_project_files(workspace_path: str) -> str:
