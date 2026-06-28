@@ -48,6 +48,7 @@ class Project(models.Model):
     onboarding_goal_prompt = models.TextField(blank=True)
     notes = models.TextField(blank=True, help_text='Project notes and context')
     directives = models.TextField(blank=True, help_text='Standing instructions for the agent')
+    require_gateway = models.BooleanField(default=False, help_text='When true, agent must use local/gateway LLM endpoint — cloud providers blocked')
     hugo_theme = models.CharField(max_length=128, blank=True, help_text='Hugo theme name (for Hugo framework projects)')
     context_cache = models.TextField(blank=True, help_text='Cached project context for wizard')
     context_cache_updated_at = models.DateTimeField(null=True, blank=True)
