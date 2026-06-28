@@ -194,7 +194,8 @@ def _refresh_repo_checkout_for_deploy(project: Project, repo_path: Path, log_fil
 
 
 def _slugify_system_name(value: str) -> str:
-    return re.sub(r'[^a-z0-9-]', '-', value.lower()).strip('-') or 'app'
+    s = re.sub(r'[^a-z0-9-]', '-', value.lower()).strip('-') or 'app'
+    return re.sub(r'-{2,}', '-', s)
 
 
 def _ensure_app_port(environment) -> int:
