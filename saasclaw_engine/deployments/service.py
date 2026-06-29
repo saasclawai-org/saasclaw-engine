@@ -880,10 +880,78 @@ def _restart_service(service_name, log_file=None):
 
 
 
+def _detect_output_dir(repo_path: Path, build_cmd: str = '') -> str:
+    """Auto-detect the build output directory for a project.
+
+    Priority:
+    1. Explicit config: vite.config.js build.outDir, next.config.js distDir
+    2. Known convention: if build uses Vite, default is 'dist'
+    3. Fallback scan: check dist/, web/, build/, out/, _site/ — pick first that exists
+    4. Final fallback: 'dist'
+    """
+    import json as _json
+    import re as _re
+
+    # --- Check vite.config.js for build.outDir ---
+    for cfg_name in ('vite.config.js', 'vite.config.ts', 'vite.config.mts'):
+        cfg = repo_path / cfg_name
+        if cfg.exists():
+            content = cfg.read_text(encoding='utf-8', errors='replace')
+            m = _re.search(r'build\s*:\s*\{[^}]*outDir\s*:\s*[\'"]([^\'"]+)', content)
+            if m:
+                return m.group(1).strip()
+            # Vite default
+            return 'dist'
+
+    # --- Check next.config.js for distDir ---
+    for cfg_name in ('next.config.js', 'next.config.mjs', 'next.config.ts'):
+        cfg = repo_path / cfg_name
+        if cfg.exists():
+            content = cfg.read_text(encoding='utf-8', errors='replace')
+            m = _re.search(r'distDir\s*:\s*[\'"]([^\'"]+)', content)
+            if m:
+                return m.group(1).strip()
+            # Next.js default
+            return '.next'
+
+    # --- Check package.json build script for Vite ---
+    pkg = repo_path / 'package.json'
+    if pkg.exists():
+        try:
+            data = _json.loads(pkg.read_text())
+            scripts = data.get('scripts', {})
+            build_script = scripts.get('build', '')
+            if 'vite' in build_script.lower():
+                return 'dist'
+            if 'nuxt' in build_script.lower():
+                return '.output/public'
+            if 'astro' in build_script.lower():
+                return 'dist'
+        except Exception:
+            pass
+
+    # --- Fallback: pick first directory that exists ---
+    candidates = ['dist', 'web', 'build', 'out', '_site', '.next', '.output/public']
+    for candidate in candidates:
+        if (repo_path / candidate).is_dir():
+            return candidate
+
+    return 'dist'
+
+
 def _deploy_static_environment(project: Project, environment: Environment, deployment: Deployment, repo_path: Path, log_file: Path) -> None:
     """Deploy a static site to an environment."""
     build_cmd = environment.build_command or 'echo "No build step"'
-    output_dir = environment.output_directory or 'dist'
+
+    # Determine output_dir: explicit env field (non-empty) > auto-detect > 'dist'
+    explicit = getattr(environment, 'output_directory', None) or ''
+    if explicit.strip():
+        output_dir = explicit.strip()
+    else:
+        output_dir = _detect_output_dir(repo_path, build_cmd)
+
+    with log_file.open('a', encoding='utf-8') as handle:
+        handle.write(f'Output directory: {output_dir} (source: {"explicit" if explicit.strip() else "auto-detected"})\n')
     web_root = Path(project.workspace_root) / 'runtime' / environment.name / 'web'
     web_root.mkdir(parents=True, exist_ok=True)
 
@@ -930,10 +998,14 @@ def _deploy_static_environment(project: Project, environment: Environment, deplo
         _run_command(build_cmd, repo_path, log_file, env=build_env or None)
 
     output_path = repo_path / output_dir
+    with log_file.open('a', encoding='utf-8') as handle:
+        handle.write(f'Copying from {output_path} -> {web_root}\n')
     if output_path.exists():
         _publish_directory(output_path, web_root)
     else:
         # No build output dir — copy repo root (for plain HTML projects)
+        with log_file.open('a', encoding='utf-8') as handle:
+            handle.write(f'Warning: {output_path} does not exist, copying repo root instead\n')
         _publish_directory(repo_path, web_root)
 
     environment.web_root = str(web_root)
