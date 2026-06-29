@@ -152,7 +152,17 @@ def _refresh_repo_checkout_for_deploy(project: Project, repo_path: Path, log_fil
     """Clone or pull the project repo for deploy."""
     repo_path.parent.mkdir(parents=True, exist_ok=True)
     if not (repo_path / '.git').exists():
-        clone_or_update_repo(project, target_path=repo_path)
+        from saasclaw_engine.integrations.models import GitHubInstallation
+        inst = GitHubInstallation.objects.filter(
+            account_name=project.repo_owner
+        ).first() or GitHubInstallation.objects.first()
+        if inst and project.repo_owner and project.repo_name:
+            clone_or_update_repo(
+                inst.installation_id, project.repo_owner, project.repo_name,
+                project.repo_default_branch or 'main', str(repo_path),
+            )
+        elif project.repo_url:
+            _run_command(f'git clone {project.repo_url} {repo_path}', None, log_file)
     else:
         _assert_repo_binding(project, repo_path)
         branch = project.repo_default_branch or 'main'
