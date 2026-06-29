@@ -1,6 +1,8 @@
 import json
 import logging
 import re
+
+from django.conf import settings
 import shutil
 import subprocess
 from pathlib import Path
@@ -666,7 +668,7 @@ def _publish_directory(source: Path, destination: Path) -> None:
 def _pick_ssl_certs(domain):
     """Return (cert_path, key_path) for the given domain."""
     if '.preview.' in domain:
-        base = 'preview.saasclaw.ai'
+        base = settings.PREVIEW_BASE_DOMAIN
     else:
         base = 'saasclaw.ai'
     return (

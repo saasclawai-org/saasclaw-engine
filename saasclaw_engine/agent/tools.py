@@ -5,6 +5,8 @@ Tools are designed to be safe: no root, no network, locked to workspace dir.
 """
 import os
 import re
+
+from django.conf import settings
 import shlex
 import subprocess
 import urllib.request
@@ -530,8 +532,8 @@ def _ensure_nginx_config(slug, domain, web_root, environment='preview'):
     
     # Determine which SSL cert to use
     if environment == 'preview':
-        ssl_cert = "/etc/letsencrypt/live/preview.saasclaw.ai/fullchain.pem"
-        ssl_key = "/etc/letsencrypt/live/preview.saasclaw.ai/privkey.pem"
+        ssl_cert = f"/etc/letsencrypt/live/{settings.PREVIEW_BASE_DOMAIN}/fullchain.pem"
+        ssl_key = f"/etc/letsencrypt/live/{settings.PREVIEW_BASE_DOMAIN}/privkey.pem"
     else:
         ssl_cert = "/etc/letsencrypt/live/saasclaw.ai/fullchain.pem"
         ssl_key = "/etc/letsencrypt/live/saasclaw.ai/privkey.pem"
