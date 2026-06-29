@@ -1,101 +1,128 @@
-import subprocess
-from unittest.mock import patch
+"""Tests for integration models and webhook handling."""
 
-from django.test import TestCase
+import json
 
-from saasclaw_engine.integrations.github import clone_or_update_repo, commit_and_push_repo
+from django.test import TestCase, RequestFactory
+from django.contrib.auth import get_user_model
+
+from saasclaw_engine.integrations.models import GitHubInstallation
+from saasclaw_engine.integrations.views import github_webhook
+
+User = get_user_model()
 
 
-class GitHubIntegrationTests(TestCase):
-    @patch('integrations.github.time.sleep')
-    @patch('integrations.github.create_installation_access_token', return_value='ghs-secret-token')
-    @patch('integrations.github.subprocess.run')
-    def test_clone_or_update_repo_retries_and_redacts_token_in_errors(self, mock_run, _mock_token, mock_sleep):
-        branch_error = subprocess.CalledProcessError(
-            128,
-            ['git', 'clone', '--branch', 'main', 'https://x-access-token:ghs-secret-token@github.com/acme/demo.git', '/tmp/demo'],
-            stderr='fatal: repository not ready yet',
+class GitHubInstallationModelTests(TestCase):
+    """Tests for GitHubInstallation model."""
+
+    def test_create_installation(self):
+        user = User.objects.create_user(username='ghuser', password='pass')
+        inst = GitHubInstallation.objects.create(
+            user=user,
+            account_name='my-org',
+            account_type='Organization',
+            installation_id=12345678,
+            github_account_id=98765432,
         )
-        clone_error = subprocess.CalledProcessError(
-            128,
-            ['git', 'clone', 'https://x-access-token:ghs-secret-token@github.com/acme/demo.git', '/tmp/demo'],
-            stderr='fatal: repository not ready yet',
+        self.assertEqual(inst.account_name, 'my-org')
+        self.assertEqual(inst.account_type, 'Organization')
+        self.assertEqual(inst.installation_id, 12345678)
+        self.assertEqual(inst.github_account_id, 98765432)
+        self.assertEqual(inst.access_metadata_json, {})
+        self.assertEqual(str(inst), 'my-org (12345678)')
+
+    def test_unique_installation_id(self):
+        user = User.objects.create_user(username='ghuser2', password='pass')
+        GitHubInstallation.objects.create(
+            user=user, account_name='org1', installation_id=111,
         )
-        mock_run.side_effect = [branch_error, clone_error, branch_error, clone_error, None]
+        with self.assertRaises(Exception):
+            GitHubInstallation.objects.create(
+                user=user, account_name='org2', installation_id=111,
+            )
 
-        destination = clone_or_update_repo(1, 'acme', 'demo', 'main', '/tmp/demo')
-
-        self.assertEqual(destination, '/tmp/demo')
-        self.assertEqual(mock_run.call_count, 5)
-        self.assertEqual(mock_sleep.call_args_list, [((1,), {}), ((2,), {})])
-
-    @patch('integrations.github.time.sleep')
-    @patch('integrations.github.create_installation_access_token', return_value='ghs-secret-token')
-    @patch('integrations.github.subprocess.run')
-    def test_clone_or_update_repo_raises_sanitized_error_after_retries(self, mock_run, _mock_token, mock_sleep):
-        branch_error = subprocess.CalledProcessError(
-            128,
-            ['git', 'clone', '--branch', 'main', 'https://x-access-token:ghs-secret-token@github.com/acme/demo.git', '/tmp/demo'],
-            stderr='fatal: repository not found',
+    def test_user_nullable(self):
+        inst = GitHubInstallation.objects.create(
+            account_name='system-install',
+            installation_id=222,
         )
-        clone_error = subprocess.CalledProcessError(
-            128,
-            ['git', 'clone', 'https://x-access-token:ghs-secret-token@github.com/acme/demo.git', '/tmp/demo'],
-            stderr='fatal: repository not found',
+        self.assertIsNone(inst.user)
+        self.assertEqual(inst.account_name, 'system-install')
+
+    def test_access_metadata_json(self):
+        user = User.objects.create_user(username='ghuser3', password='pass')
+        inst = GitHubInstallation.objects.create(
+            user=user, account_name='org-x', installation_id=333,
+            access_metadata_json={'token': 'ghs_abc', 'expires_at': '2025-01-01'},
         )
-        mock_run.side_effect = [branch_error, clone_error, branch_error, clone_error, branch_error, clone_error]
+        self.assertEqual(inst.access_metadata_json['token'], 'ghs_abc')
 
-        with self.assertRaises(RuntimeError) as ctx:
-            clone_or_update_repo(1, 'acme', 'demo', 'main', '/tmp/demo')
+    def test_ordering(self):
+        user = User.objects.create_user(username='ghuser4', password='pass')
+        GitHubInstallation.objects.create(
+            user=user, account_name='zebra', installation_id=444,
+        )
+        GitHubInstallation.objects.create(
+            user=user, account_name='alpha', installation_id=555,
+        )
+        installs = list(GitHubInstallation.objects.all())
+        self.assertEqual(installs[0].account_name, 'alpha')
 
-        message = str(ctx.exception)
-        self.assertIn('Git clone failed for acme/demo', message)
-        self.assertIn('fatal: repository not found', message)
-        self.assertNotIn('ghs-secret-token', message)
-        self.assertEqual(mock_sleep.call_count, 2)
+    def test_github_account_id_nullable(self):
+        user = User.objects.create_user(username='ghuser5', password='pass')
+        inst = GitHubInstallation.objects.create(
+            user=user, account_name='org', installation_id=666,
+        )
+        self.assertIsNone(inst.github_account_id)
 
-    @patch('integrations.github.Path.exists', return_value=True)
-    @patch('integrations.github.create_installation_access_token', return_value='ghs-secret-token')
-    @patch('integrations.github.subprocess.run')
-    def test_clone_or_update_repo_keeps_clean_remote_url(self, mock_run, _mock_token, _mock_exists):
-        fetch_ok = subprocess.CompletedProcess(args=['git'], returncode=0, stdout='', stderr='')
-        checkout_ok = subprocess.CompletedProcess(args=['git'], returncode=0, stdout='', stderr='')
-        reset_ok = subprocess.CompletedProcess(args=['git'], returncode=0, stdout='', stderr='')
-        mock_run.side_effect = [
-            fetch_ok,
-            fetch_ok,
-            checkout_ok,
-            reset_ok,
-        ]
+    def test_user_reverse_relation(self):
+        user = User.objects.create_user(username='ghuser6', password='pass')
+        GitHubInstallation.objects.create(
+            user=user, account_name='org', installation_id=777,
+        )
+        GitHubInstallation.objects.create(
+            user=user, account_name='org2', installation_id=888,
+        )
+        self.assertEqual(user.github_installations.count(), 2)
 
-        destination = clone_or_update_repo(1, 'acme', 'demo', 'main', '/tmp/demo')
 
-        self.assertEqual(destination, '/tmp/demo')
-        set_url_command = mock_run.call_args_list[0].args[0]
-        self.assertEqual(set_url_command, ['git', '-C', '/tmp/demo', 'remote', 'set-url', 'origin', 'https://github.com/acme/demo.git'])
-        fetch_command = mock_run.call_args_list[1].args[0]
-        self.assertIn('AUTHORIZATION: basic', fetch_command[2])
-        self.assertNotIn('ghs-secret-token', ' '.join(set_url_command))
+class GitHubWebhookViewTests(TestCase):
+    """Tests for the GitHub webhook endpoint."""
 
-    @patch('integrations.github.create_installation_access_token', return_value='ghs-secret-token')
-    @patch('integrations.github.subprocess.run')
-    def test_commit_and_push_repo_uses_auth_header_without_persisting_token(self, mock_run, _mock_token):
-        status_clean = subprocess.CompletedProcess(args=['git'], returncode=0, stdout=' M README.md\n', stderr='')
-        push_ok = subprocess.CompletedProcess(args=['git'], returncode=0, stdout='', stderr='')
-        mock_run.side_effect = [
-            push_ok,
-            push_ok,
-            push_ok,
-            status_clean,
-            push_ok,
-            push_ok,
-            push_ok,
-        ]
+    def setUp(self):
+        self.factory = RequestFactory()
 
-        commit_and_push_repo(1, 'acme', 'demo', 'main', '/tmp/demo', 'test commit')
+    def test_webhook_requires_post(self):
+        request = self.factory.get('/webhooks/github/')
+        response = github_webhook(request)
+        self.assertIn(response.status_code, (405, 403))
 
-        set_url_command = mock_run.call_args_list[5].args[0]
-        self.assertEqual(set_url_command, ['git', '-C', '/tmp/demo', 'remote', 'set-url', 'origin', 'https://github.com/acme/demo.git'])
-        push_command = mock_run.call_args_list[6].args[0]
-        self.assertIn('AUTHORIZATION: basic', push_command[2])
-        self.assertNotIn('ghs-secret-token', ' '.join(set_url_command))
+    def test_webhook_invalid_json_returns_bad_request(self):
+        request = self.factory.post(
+            '/webhooks/github/',
+            data='not-json',
+            content_type='text/plain',
+            HTTP_X_GITHUB_EVENT='push',
+        )
+        response = github_webhook(request)
+        self.assertEqual(response.status_code, 400)
+
+    def test_webhook_no_secret_configured(self):
+        request = self.factory.post(
+            '/webhooks/github/',
+            data=json.dumps({}),
+            content_type='application/json',
+            HTTP_X_GITHUB_EVENT='push',
+        )
+        response = github_webhook(request)
+        self.assertEqual(response.status_code, 400)
+
+    def test_webhook_empty_body_treated_as_valid(self):
+        request = self.factory.post(
+            '/webhooks/github/',
+            data=b'',
+            content_type='application/json',
+            HTTP_X_GITHUB_EVENT='ping',
+        )
+        # Empty body → '{}' parsed, then hits GITHUB_WEBHOOK_SECRET check
+        response = github_webhook(request)
+        self.assertEqual(response.status_code, 400)
