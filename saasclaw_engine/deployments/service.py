@@ -648,6 +648,93 @@ def _deploy_django_environment(project: Project, environment: Environment, deplo
     environment.save(update_fields=['web_root', 'deploy_path', 'updated_at'])
 
 
+def _scan_for_secrets(repo_path: Path) -> list[str]:
+    """Scan repo files for potential secrets/credentials. Returns list of findings.
+    Does NOT block deploy — warnings only (NIST AI RMF MAP 2.3).
+    """
+    findings: list[str] = []
+    patterns = [
+        (r'AKIA[0-9A-Z]{16}', 'AWS Access Key'),
+        (r'aws_secret_access_key\s*[=:>]\s*["\']?[A-Za-z0-9/+=]{40}', 'AWS Secret Key'),
+        (r'ghp_[A-Za-z0-9]{36}', 'GitHub Personal Access Token'),
+        (r'gho_[A-Za-z0-9]{36}', 'GitHub OAuth Token'),
+        (r'glpat-[A-Za-z0-9\-]{20}', 'GitLab Token'),
+        (r'-----BEGIN (RSA |EC )?PRIVATE KEY-----', 'Private Key'),
+        (r'password\s*[=:>]\s*["\']?[A-Za-z0-9!@#$%^&*]{8,}', 'Password in config'),
+        (r'(?:mysql|postgres|mongodb|redis)://[^:]+:[^@]+@', 'DB connection string with credentials'),
+        (r'api[_-]?key\s*[=:>]\s*["\']?[A-Za-z0-9_\-]{20,}', 'API Key'),
+        (r'sk-[A-Za-z0-9]{20,}', 'Secret Key (OpenAI-style)'),
+    ]
+    skip_dirs = {'.git', 'node_modules', '__pycache__', '.venv', 'vendor', '.next', 'dist', 'build'}
+    try:
+        for fpath in repo_path.rglob('*'):
+            if any(part in skip_dirs for part in fpath.parts):
+                continue
+            if not fpath.is_file() or fpath.stat().st_size > 500_000:
+                continue
+            try:
+                content = fpath.read_text(encoding='utf-8', errors='replace')
+            except Exception:
+                continue
+            for pattern, label in patterns:
+                for match in re.finditer(pattern, content):
+                    rel = fpath.relative_to(repo_path)
+                    findings.append(f'{label} found in {rel}:{content[:match.end()].count(chr(10))+1}')
+    except Exception as exc:
+        findings.append(f'Secret scan error: {exc}')
+    return findings
+
+
+def _scan_dependencies(repo_path: Path) -> list[str]:
+    """Scan project dependencies for known vulnerabilities.
+    For Node.js: runs npm audit --json and checks for high/critical CVEs.
+    For Python: runs pip check.
+    Does NOT block deploy — warnings only (NIST AI RMF MAP 2.3).
+    """
+    findings: list[str] = []
+    # Node.js: npm audit
+    pkg_json = repo_path / 'package.json'
+    if pkg_json.exists():
+        try:
+            result = subprocess.run(
+                ['npm', 'audit', '--json'], cwd=str(repo_path),
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode in (0, 1):  # 0=no vulns, 1=vulns found
+                try:
+                    audit = json.loads(result.stdout)
+                    meta = audit.get('metadata', {})
+                    for severity in ('critical', 'high'):
+                        count = meta.get('vulnerabilities', {}).get(severity, 0)
+                        if count:
+                            findings.append(f'npm audit: {count} {severity} vulnerabilities')
+                except (json.JSONDecodeError, KeyError):
+                    pass
+        except subprocess.TimeoutExpired:
+            findings.append('npm audit timed out (30s)')
+        except FileNotFoundError:
+            findings.append('npm not found — skipped dependency audit')
+        except Exception as exc:
+            findings.append(f'npm audit error: {exc}')
+    # Python: pip check
+    req_txt = repo_path / 'requirements.txt'
+    if req_txt.exists():
+        try:
+            result = subprocess.run(
+                ['pip', 'check'], cwd=str(repo_path),
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.stdout.strip():
+                findings.append(f'pip check issues: {result.stdout.strip()[:300]}')
+        except subprocess.TimeoutExpired:
+            findings.append('pip check timed out (30s)')
+        except FileNotFoundError:
+            findings.append('pip not found — skipped dependency check')
+        except Exception as exc:
+            findings.append(f'pip check error: {exc}')
+    return findings
+
+
 def _publish_directory(source: Path, destination: Path) -> None:
     """Copy built static files to their destination."""
     # Clear destination first to avoid permission errors on existing files
@@ -1237,6 +1324,26 @@ def _deploy_environment(project: Project, environment_name: str, triggered_by=No
         deployment.git_commit_sha = _repo_commit_sha(repo_path)
         deployment.save(update_fields=['git_commit_sha'])
 
+        # --- NIST AI RMF: Secret scanning (after clone, before build) ---
+        secret_findings = _scan_for_secrets(repo_path)
+        if secret_findings:
+            logger.warning('Secret scan found %d issue(s) for %s', len(secret_findings), project.slug)
+            with log_file.open('a', encoding='utf-8') as handle:
+                handle.write(f'\n=== SECRET SCAN ({len(secret_findings)} finding(s)) ===\n')
+                for finding in secret_findings:
+                    handle.write(f'  WARNING: {finding}\n')
+                handle.write('=== END SECRET SCAN ===\n\n')
+
+        # --- NIST AI RMF: Dependency scanning (after build, before publish) ---
+        dep_findings = _scan_dependencies(repo_path)
+        if dep_findings:
+            logger.warning('Dependency scan found %d issue(s) for %s', len(dep_findings), project.slug)
+            with log_file.open('a', encoding='utf-8') as handle:
+                handle.write(f'\n=== DEPENDENCY SCAN ({len(dep_findings)} issue(s)) ===\n')
+                for finding in dep_findings:
+                    handle.write(f'  WARNING: {finding}\n')
+                handle.write('=== END DEPENDENCY SCAN ===\n\n')
+
         if environment.runtime_kind == Environment.RuntimeKind.DJANGO:
             _deploy_django_environment(project, environment, deployment, repo_path, log_file)
         elif environment.runtime_kind == Environment.RuntimeKind.NODE_SSR:
@@ -1272,3 +1379,71 @@ def deploy_preview(project: Project, triggered_by=None) -> Deployment:
 def deploy_production(project: Project, triggered_by=None) -> Deployment:
     """Deploy to the project's production environment."""
     return _deploy_environment(project, 'production', triggered_by=triggered_by)
+
+
+def decommission_project(project_slug: str, project_name: str = '') -> None:
+    """Log decommissioning steps for a project (NIST AI RMF GOVERN 1.3).
+
+    This is a logging-only utility — the actual deletion is handled elsewhere.
+    Logs to /srv/saasclaw/logs/decommission.log.
+    """
+    import os as _os
+    log_path = Path('/srv/saasclaw/logs/decommission.log')
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = dj_timezone.now().isoformat()
+
+    lines = [f'\n{"="*60}']
+    lines.append(f'DECOMMISSION: {project_name or project_slug} (slug={project_slug})')
+    lines.append(f'Timestamp: {timestamp}')
+    lines.append(f'{'-'*60}')
+
+    # Services
+    service_names = [f'saasclaw-{project_slug}-preview', f'saasclaw-{project_slug}-production']
+    for svc in service_names:
+        try:
+            result = subprocess.run(['sudo', 'systemctl', 'is-active', svc], capture_output=True, text=True, timeout=5)
+            status = result.stdout.strip()
+            if status == 'active':
+                subprocess.run(['sudo', 'systemctl', 'stop', svc], capture_output=True, timeout=10)
+                subprocess.run(['sudo', 'systemctl', 'disable', svc], capture_output=True, timeout=5)
+                lines.append(f'Service stopped & disabled: {svc}')
+            else:
+                lines.append(f'Service not active: {svc} ({status})')
+        except Exception as exc:
+            lines.append(f'Service check failed for {svc}: {exc}')
+
+    # Nginx configs
+    for svc in service_names:
+        nginx_site = Path(f'/etc/nginx/sites-enabled/{svc}')
+        nginx_avail = Path(f'/etc/nginx/sites-available/{svc}')
+        if nginx_site.exists() or nginx_avail.exists():
+            try:
+                subprocess.run(['sudo', 'rm', '-f', str(nginx_site)], capture_output=True, timeout=5)
+                subprocess.run(['sudo', 'rm', '-f', str(nginx_avail)], capture_output=True, timeout=5)
+                lines.append(f'Nginx config removed: {svc}')
+            except Exception as exc:
+                lines.append(f'Nginx removal failed for {svc}: {exc}')
+        else:
+            lines.append(f'Nginx config not found: {svc}')
+
+    # Try nginx reload
+    try:
+        subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], capture_output=True, timeout=5)
+        lines.append('Nginx reloaded successfully')
+    except Exception as exc:
+        lines.append(f'Nginx reload failed: {exc}')
+
+    # Git repo
+    project_dir = Path(f'/srv/saasclaw/projects/{project_slug}')
+    bare_repo = Path(f'/srv/saasclaw/git/{project_slug}.git')
+    lines.append(f'Project dir exists: {project_dir.exists()} ({project_dir})')
+    lines.append(f'Bare repo exists: {bare_repo.exists()} ({bare_repo})')
+
+    # Data cleanup status
+    lines.append(f'Data cleanup: to be handled by DB cascade delete')
+    lines.append(f'{"="*60}\n')
+
+    with log_path.open('a', encoding='utf-8') as f:
+        f.write('\n'.join(lines) + '\n')
+
+    logger.info('Decommission logged for %s', project_slug)

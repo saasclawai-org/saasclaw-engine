@@ -19,6 +19,12 @@ class Project(models.Model):
     class RepoProvider(models.TextChoices):
         GITHUB = 'github', 'GitHub'
 
+    class RiskTier(models.TextChoices):
+        LOW = 'low', 'Low'
+        MEDIUM = 'medium', 'Medium'
+        HIGH = 'high', 'High'
+        CRITICAL = 'critical', 'Critical'
+
     class OnboardingStep(models.TextChoices):
         START = 'start', 'Start'
         GITHUB = 'github', 'GitHub'
@@ -53,12 +59,37 @@ class Project(models.Model):
     hugo_theme = models.CharField(max_length=128, blank=True, help_text='Hugo theme name (for Hugo framework projects)')
     context_cache = models.TextField(blank=True, help_text='Cached project context for wizard')
     context_cache_updated_at = models.DateTimeField(null=True, blank=True)
+    risk_tier = models.CharField(max_length=10, choices=RiskTier.choices, default=RiskTier.LOW)
     last_deployed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['name']
+
+    def update_risk_tier(self, data_sensitivity: str = '') -> str:
+        """Auto-assign risk tier based on data sensitivity classification.
+
+        Mapping (NIST AI RMF): none→low, low→low, medium→medium,
+        high+PII→high, high+PHI→critical, high+financial→high.
+        Returns the assigned tier.
+        """
+        ds = (data_sensitivity or '').strip().lower()
+        if ds in ('none', '', 'low'):
+            self.risk_tier = self.RiskTier.LOW
+        elif ds == 'medium':
+            self.risk_tier = self.RiskTier.MEDIUM
+        elif ds == 'high':
+            # Default to high; refine if we know data type from description
+            desc = (self.description or '').lower()
+            if any(kw in desc for kw in ('phi', 'health', 'medical', 'hipaa')):
+                self.risk_tier = self.RiskTier.CRITICAL
+            else:
+                self.risk_tier = self.RiskTier.HIGH
+        else:
+            self.risk_tier = self.RiskTier.LOW
+        self.save(update_fields=['risk_tier', 'updated_at'])
+        return self.risk_tier
 
     def __str__(self):
         return self.name
@@ -112,6 +143,10 @@ class ProjectSubmission(models.Model):
     estimated_timeline = models.CharField(
         max_length=128, blank=True,
         help_text="When they need it, urgency level"
+    )
+    ai_generated_code = models.BooleanField(
+        default=True,
+        help_text="Whether this project uses AI-generated code (NIST AI RMF disclosure)"
     )
 
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.PENDING)
