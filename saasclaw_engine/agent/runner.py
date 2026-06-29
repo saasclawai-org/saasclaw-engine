@@ -12,6 +12,7 @@ Supports multiple LLM backends via STUDIO_LLM_PROVIDER:
 All OpenAI-compatible backends share one code path.
 Anthropic uses its own message format.
 """
+import concurrent.futures
 import json
 import logging
 import os
@@ -312,7 +313,7 @@ def _system_prompt(workspace_path: str, project_name: str, project_notes: str = 
     if file_inventory:
         inventory_section = f"\n## Existing Files\nYou do NOT need to read these files -- they are listed for your awareness. Only read a file if you need to edit it.\n{file_inventory}\n"
 
-    all_tools = "read_file, write_file, replace_in_file, list_files, git_status, git_diff, git_commit, run_command, web_fetch, web_search, update_todos"
+    all_tools = "read_file, write_file, replace_in_file, list_files, git_status, git_diff, git_commit, run_command, web_fetch, web_search, update_todos, apply_patch, background_command, poll_command, spawn_subtask, check_subtask"
     if allowed_tools:
         tools_str = ', '.join(allowed_tools)
     else:
@@ -1594,15 +1595,51 @@ def run_agent(
             },
         })
 
-        # Execute each tool call
-        for tc in tool_calls:
-            if tool_call_count >= MAX_TOTAL_TOOL_CALLS:
-                break
+        # Execute tool calls in parallel
+        def _exec_single(tc):
+            """Execute a single tool call, returning (tc, name, raw_args, args, tool_result)."""
             func = tc.get("function", {})
             name = func.get("name", "")
             raw_args = func.get("arguments", "{}")
+            try:
+                args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+            except (json.JSONDecodeError, ValueError):
+                # Try to repair common streaming issues (truncated JSON, raw newlines)
+                if isinstance(raw_args, str) and len(raw_args) > 10:
+                    try:
+                        repaired = raw_args.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                        args = json.loads(repaired)
+                    except (json.JSONDecodeError, ValueError):
+                        try:
+                            args = json.loads(raw_args, strict=False)
+                        except (json.JSONDecodeError, ValueError):
+                            args = {}
+                else:
+                    args = {}
+            tool_result = agent_tools.execute_tool(workspace_path, name, args, bool(profile_tools))
+            return (tc, name, raw_args, args, tool_result)
+
+        # Filter tool calls that fit within the budget
+        eligible_calls = [tc for tc in tool_calls if tool_call_count < MAX_TOTAL_TOOL_CALLS]
+        tool_call_count += len(eligible_calls)
+
+        if len(eligible_calls) > 1:
+            # Run concurrently
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {executor.submit(_exec_single, tc): tc for tc in eligible_calls}
+                results_in_order = []
+                for future in concurrent.futures.as_completed(futures):
+                    results_in_order.append(future.result())
+            # Sort by original index for conversation history
+            results_in_order.sort(key=lambda x: eligible_calls.index(x[0]))
+        else:
+            # Single call — no thread overhead
+            results_in_order = [_exec_single(tc) for tc in eligible_calls]
+
+        # Process results (preserving all UI/activity/context behavior)
+        for tc, name, raw_args, args, tool_result in results_in_order:
             if session_id:
-                args_preview = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                args_preview = args
                 friendly = {"read_file": "Reading", "write_file": "Writing", "replace_in_file": "Editing", "list_files": "Listing files", "git_status": "Checking git", "git_commit": "Committing", "git_diff": "Viewing diff", "run_command": "Running command", "web_fetch": "Fetching", "web_search": "Searching"}
                 display = friendly.get(name, name)
                 if name in ("read_file", "write_file", "replace_in_file") and isinstance(args_preview, dict):
@@ -1611,30 +1648,6 @@ def run_agent(
                     cmd = args_preview.get('command', '')[:60]
                     display += f" `{cmd}`"
                 set_agent_activity(session_id, display, tool_call_count)
-
-            try:
-                args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-            except (json.JSONDecodeError, ValueError) as e:
-                # Try to repair common streaming issues (truncated JSON, raw newlines)
-                logger.warning("Tool '%s' arg JSON decode failed (len=%d): %s", name, len(raw_args) if isinstance(raw_args, str) else 0, str(e)[:200])
-                if isinstance(raw_args, str) and len(raw_args) > 10:
-                    try:
-                        # Attempt 1: fix raw control characters
-                        repaired = raw_args.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-                        args = json.loads(repaired)
-                        logger.info("Tool '%s' args recovered after newline repair", name)
-                    except (json.JSONDecodeError, ValueError):
-                        try:
-                            # Attempt 2: use json.JSONDecoder with strict=False
-                            args = json.loads(raw_args, strict=False)
-                            logger.info("Tool '%s' args recovered with strict=False", name)
-                        except (json.JSONDecodeError, ValueError):
-                            args = {}
-                else:
-                    args = {}
-
-            tool_result = agent_tools.execute_tool(workspace_path, name, args, bool(profile_tools))
-            tool_call_count += 1
 
             # Break on repeated identical tool errors
             if tool_result.startswith("Error:"):
@@ -1651,8 +1664,6 @@ def run_agent(
             else:
                 consecutive_errors = 0
                 last_error_key = None
-
-           
 
             messages.append({
                 "role": "tool",

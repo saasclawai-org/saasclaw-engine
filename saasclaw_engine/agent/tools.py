@@ -5,6 +5,8 @@ Tools are designed to be safe: no root, no network, locked to workspace dir.
 """
 import os
 import re
+import threading
+import uuid
 
 from django.conf import settings
 import shlex
@@ -804,6 +806,163 @@ def update_todos(workspace_path: str, items: list) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Multi-file apply_patch tool
+# ---------------------------------------------------------------------------
+
+def apply_patch_tool(workspace_path: str, operations: list) -> str:
+    """Apply edits to multiple files in a single tool call.
+
+    Each operation specifies a file path and either 'create' (new file)
+    or 'edit' (search/replace pairs). Best-effort: continues on failures.
+    """
+    results = []
+    for op in operations:
+        path = op.get("path", "")
+        action = op.get("action", "")
+        if not path:
+            results.append("Error: operation missing 'path'")
+            continue
+        if action == "create":
+            content = op.get("content", "")
+            r = write_file(workspace_path, path, content)
+            results.append(r)
+        elif action == "edit":
+            edits = op.get("edits", [])
+            r = replace_in_file(workspace_path, path, edits)
+            results.append(r)
+        else:
+            results.append(f"Error: unknown action '{action}' for {path}. Use 'create' or 'edit'.")
+    return "\n".join(results)
+
+
+# ---------------------------------------------------------------------------
+# Background command execution
+# ---------------------------------------------------------------------------
+
+_bg_jobs: dict = {}  # job_id -> {"process": Popen, "output": str, "done": bool, "returncode": int}
+
+def background_command(workspace_path: str, command: str) -> str:
+    """Start a long-running command in the background, return a job ID."""
+    job_id = uuid.uuid4().hex[:8]
+    proc = subprocess.Popen(
+        command, shell=True, cwd=workspace_path,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True
+    )
+    _bg_jobs[job_id] = {"process": proc, "output": "", "done": False, "returncode": None}
+
+    def _monitor():
+        try:
+            out, _ = proc.communicate(timeout=3600)
+            _bg_jobs[job_id]["output"] = out or ""
+            _bg_jobs[job_id]["done"] = True
+            _bg_jobs[job_id]["returncode"] = proc.returncode
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _bg_jobs[job_id]["output"] = _bg_jobs[job_id].get("output", "") + "\n[Timed out after 1h]"
+            _bg_jobs[job_id]["done"] = True
+            _bg_jobs[job_id]["returncode"] = -1
+
+    t = threading.Thread(target=_monitor, daemon=True)
+    t.start()
+    return f"Started background job '{job_id}'. Use poll_command to check status. Command: {command}"
+
+
+def poll_command(workspace_path: str, job_id: str) -> str:
+    """Check the status and output of a background job."""
+    job = _bg_jobs.get(job_id)
+    if not job:
+        return f"Error: unknown job ID '{job_id}'"
+    status = "DONE" if job["done"] else "RUNNING"
+    rc = f" (exit code {job['returncode']})" if job["done"] else ""
+    output = job["output"][-3000:] if job["output"] else "(no output yet)"
+    return f"Job '{job_id}': {status}{rc}\n\nOutput:\n{output}"
+
+
+# ---------------------------------------------------------------------------
+# Subagent spawning
+# ---------------------------------------------------------------------------
+
+def spawn_subtask(workspace_path: str, task: str, model: str = "") -> str:
+    """Spawn a background subtask using the agent runner."""
+    try:
+        import django
+        import os as _os
+        _os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+        django.setup()
+        from saasclaw_engine.projects.models import Project
+        from saasclaw_engine.agents.models import AgentTask
+        from saasclaw_engine.studio_models.models import Workspace
+
+        # Find workspace/project from path
+        ws = Workspace.objects.filter(local_path=workspace_path).first()
+        if not ws:
+            slug = _project_slug_from_workspace(workspace_path)
+            if not slug:
+                return f"Error: could not determine project from workspace path '{workspace_path}'"
+            try:
+                project = Project.objects.get(slug=slug)
+            except Project.DoesNotExist:
+                return f"Error: project '{slug}' not found."
+        else:
+            project = ws.project
+
+        # Create an AgentTask record
+        user = project.owner if hasattr(project, 'owner') else None
+        agent_task = AgentTask.objects.create(
+            project=project,
+            requested_by=user,
+            task_type=AgentTask.TaskType.EDIT_CODE,
+            prompt=task,
+            status=AgentTask.Status.QUEUED,
+        )
+
+        # Launch via Celery
+        from saasclaw_engine.agents.tasks import run_agent_subtask
+        run_agent_subtask.delay(agent_task.id, model or None)
+        return f"Spawned subtask '{agent_task.id}' ({agent_task.task_type}). Use check_subtask to check progress. Task: {task[:100]}"
+    except Exception as exc:
+        import traceback
+        return f"Error spawning subtask: {exc}\n{traceback.format_exc()[-500:]}"
+
+
+def check_subtask(workspace_path: str, task_id: str) -> str:
+    """Check the status of a spawned subtask."""
+    try:
+        import django
+        import os as _os
+        _os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+        django.setup()
+        from saasclaw_engine.agents.models import AgentTask
+        from saasclaw_engine.studio_models.models import AgentSession, AgentMessage
+
+        try:
+            agent_task = AgentTask.objects.get(id=task_id)
+        except (AgentTask.DoesNotExist, ValueError):
+            return f"Error: subtask '{task_id}' not found"
+
+        status_line = f"Subtask '{task_id}': {agent_task.status} ({agent_task.task_type})"
+        if agent_task.result_summary:
+            status_line += f"\n\nResult: {agent_task.result_summary[:500]}"
+        if agent_task.error_message:
+            status_line += f"\n\nError: {agent_task.error_message[:500]}"
+
+        # Try to get recent messages if there's a linked session
+        if agent_task.session_key:
+            try:
+                session = AgentSession.objects.get(id=agent_task.session_key)
+                msgs = AgentMessage.objects.filter(session=session).order_by('-created_at')[:3]
+                recent = "\n".join(f"[{m.role}] {m.content[:200]}" for m in reversed(msgs))
+                status_line += f"\n\nRecent messages:\n{recent}"
+            except (AgentSession.DoesNotExist, Exception):
+                pass
+
+        return status_line
+    except Exception as exc:
+        return f"Error checking subtask: {exc}"
+
+
+# ---------------------------------------------------------------------------
 
 TOOL_DEFINITIONS = [
     {
@@ -1027,6 +1186,90 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "apply_patch",
+            "description": "Apply edits to multiple files in a single call. Use for refactoring across files. Each operation creates or edits one file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string", "description": "File path relative to workspace"},
+                                "action": {"type": "string", "enum": ["create", "edit"]},
+                                "content": {"type": "string", "description": "Full file content (for action=create)"},
+                                "edits": {"type": "array", "description": "Search/replace pairs (for action=edit)", "items": {"type": "object", "properties": {"search": {"type": "string"}, "replace": {"type": "string"}}, "required": ["search", "replace"]}},
+                            },
+                            "required": ["path", "action"],
+                        },
+                        "description": "List of file operations",
+                    },
+                },
+                "required": ["operations"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "background_command",
+            "description": "Start a long-running command (build, test suite) in the background. Returns a job ID immediately. Use poll_command to check results.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Shell command to run"},
+                },
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "poll_command",
+            "description": "Check the status and output of a background command. Returns current output and whether it's still running.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "string", "description": "Job ID from background_command"},
+                },
+                "required": ["job_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "spawn_subtask",
+            "description": "Spawn a background subtask (a separate agent run) for complex multi-step work. Returns a task ID immediately. Use check_subtask to monitor progress.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "The task description for the subagent"},
+                    "model": {"type": "string", "description": "Optional model override for the subagent"},
+                },
+                "required": ["task"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_subtask",
+            "description": "Check the status and output of a spawned subtask. Returns current status, recent messages, and results.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "Task ID from spawn_subtask"},
+                },
+                "required": ["task_id"],
+            },
+        },
+    },
 ]
 
 
@@ -1061,6 +1304,11 @@ def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = 
         "set_env_var": lambda: set_env_var(workspace_path, args.get("key", ""), args.get("value", ""), args.get("is_secret", True)),
         "get_env_vars": lambda: get_env_vars(workspace_path),
         "update_todos": lambda: update_todos(workspace_path, args.get("items", [])),
+        "apply_patch": lambda: apply_patch_tool(workspace_path, args.get("operations", [])),
+        "background_command": lambda: background_command(workspace_path, args.get("command", "")),
+        "poll_command": lambda: poll_command(workspace_path, args.get("job_id", "")),
+        "spawn_subtask": lambda: spawn_subtask(workspace_path, args.get("task", ""), args.get("model", "")),
+        "check_subtask": lambda: check_subtask(workspace_path, args.get("task_id", "")),
     }
     handler = handlers.get(name)
     if not handler:

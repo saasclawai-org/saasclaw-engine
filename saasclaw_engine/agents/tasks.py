@@ -22,6 +22,89 @@ def run_preview_deploy_job(self, project_id: int, user_id: int | None = None) ->
 
 
 @shared_task(bind=True)
+def run_agent_subtask(self, agent_task_id: int | str, model_override: str | None = None) -> str:
+    """Run an agent task in the background via Celery.
+
+    Creates a session, runs the agent loop, and updates the task status.
+    """
+    import logging, traceback
+    logger = logging.getLogger(__name__)
+    import django
+    django.setup()
+
+    from saasclaw_engine.agents.models import AgentTask
+    from saasclaw_engine.studio_models.models import Workspace, AgentSession, AgentMessage
+    from saasclaw_engine.agent.runner import run_agent
+
+    try:
+        task = AgentTask.objects.get(id=agent_task_id)
+    except AgentTask.DoesNotExist:
+        logger.error("AgentTask %s not found", agent_task_id)
+        return f"error: task {agent_task_id} not found"
+
+    task.status = AgentTask.Status.RUNNING
+    task.started_at = django.utils.timezone.now()
+    task.save(update_fields=["status", "started_at"])
+
+    project = task.project
+    try:
+        # Get or create a workspace for this project
+        ws = Workspace.objects.filter(project=project, is_active=True).first()
+        if not ws:
+            return f"error: no active workspace for project {project.slug}"
+
+        workspace_path = ws.local_path
+
+        # Create a session for this subtask
+        session = AgentSession.objects.create(
+            project=project,
+            workspace=ws,
+            user=task.requested_by,
+            title=f"Subtask: {task.prompt[:80]}",
+            status="running",
+        )
+        task.session_key = str(session.id)
+        task.save(update_fields=["session_key"])
+
+        # Run the agent
+        messages = run_agent(
+            workspace_path=workspace_path,
+            project_name=project.name,
+            conversation=[],
+            user_message=task.prompt,
+            model=model_override,
+            project_id=project.id,
+            session_id=str(session.id),
+        )
+
+        # Extract final result
+        final_content = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant" and msg.get("content"):
+                final_content = msg["content"]
+                break
+
+        task.status = AgentTask.Status.SUCCEEDED
+        task.result_summary = final_content[:1000]
+        task.finished_at = django.utils.timezone.now()
+        task.save(update_fields=["status", "result_summary", "finished_at"])
+
+        session.status = "ended"
+        session.completed_at = django.utils.timezone.now()
+        session.save(update_fields=["status", "completed_at"])
+
+        return str(task.id)
+
+    except Exception as exc:
+        logger.error("Agent subtask %s failed: %s", agent_task_id, traceback.format_exc())
+        task.status = AgentTask.Status.FAILED
+        task.error_message = str(exc)[:1000]
+        task.finished_at = django.utils.timezone.now()
+        task.save(update_fields=["status", "error_message", "finished_at"])
+        raise
+
+
+@shared_task(bind=True)
 def run_production_deploy_job(self, project_id: int, user_id: int | None = None) -> int:
     from django.contrib.auth import get_user_model
     from saasclaw_engine.projects.models import Project
