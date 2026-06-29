@@ -97,6 +97,25 @@ def read_file(workspace_path: str, path: str, start_line: int = 0, end_line: int
         return f"Error reading file: {exc}"
 
 
+def _file_size_warning(path: str, line_count: int) -> str:
+    """Generate a warning if a file exceeds recommended size limits."""
+    basename = os.path.basename(path)
+    if basename in ("page.tsx", "page.jsx") and line_count > 150:
+        return (
+            f"\n\n⚠️ WARNING: '{path}' is now {line_count} lines (limit: 150). "
+            f"This is a monolithic file. You MUST extract logic into hooks/ and lib/ modules. "
+            f"Create a custom hook in src/hooks/ for the feature you just added, move the state and handlers there, "
+            f"and keep page.tsx as a thin shell that imports and dispatches to hooks. "
+            f"DO NOT add any more code to this file without refactoring first."
+        )
+    if line_count > 500:
+        return (
+            f"\n\n⚠️ WARNING: '{path}' is now {line_count} lines (limit: 500). "
+            f"Split this file into smaller modules before adding more code."
+        )
+    return ""
+
+
 def write_file(workspace_path: str, path: str, content: str) -> str:
     """Create or overwrite a file in the workspace."""
     import logging
@@ -141,7 +160,9 @@ def write_file(workspace_path: str, path: str, content: str) -> str:
     try:
         with open(full, "w", encoding="utf-8") as f:
             f.write(content)
-        return f"Wrote {len(content)} bytes to {path}"
+        line_count = content.count('\n') + 1
+        warning = _file_size_warning(path, line_count)
+        return f"Wrote {len(content)} bytes to {path}{warning}"
     except Exception as exc:
         return f"Error writing file: {exc}"
 
@@ -190,7 +211,9 @@ def replace_in_file(workspace_path: str, path: str, edits: list) -> str:
     try:
         with open(full, "w", encoding="utf-8") as f:
             f.write(content)
-        return f"Edited {path}:\n" + "\n".join(results)
+        line_count = content.count('\n') + 1
+        warning = _file_size_warning(path, line_count)
+        return f"Edited {path}:\n" + "\n".join(results) + warning
     except Exception as exc:
         return f"Error writing file: {exc}"
 
