@@ -200,3 +200,62 @@ class TokenUsage(models.Model):
     
     def __str__(self):
         return f"{self.provider}/{self.model} — {self.total_tokens} tokens"
+
+
+class SiteSettings(models.Model):
+    """Singleton model for platform-wide staff-configurable settings."""
+
+    # Project approval
+    project_approval_required = models.BooleanField(
+        default=False,
+        help_text='When enabled, users must submit a project request that staff approves before creating projects.'
+    )
+
+    # Deploy security scanning
+    secret_scan_enabled = models.BooleanField(
+        default=True,
+        help_text='Scan committed code for secrets (AWS keys, tokens, private keys) during deploy.'
+    )
+    dependency_scan_enabled = models.BooleanField(
+        default=True,
+        help_text='Run npm audit / pip check during deploy for known vulnerabilities.'
+    )
+    block_deploy_on_findings = models.BooleanField(
+        default=False,
+        help_text='Block deploy when high/critical security findings are detected (advisory by default).'
+    )
+
+    # AI governance
+    default_require_gateway = models.BooleanField(
+        default=False,
+        help_text='New projects default to LLM gateway mode (data stays on-server).'
+    )
+    ai_disclosure_required = models.BooleanField(
+        default=True,
+        help_text='Require AI disclosure checkbox on project intake form.'
+    )
+    pii_guard_enabled = models.BooleanField(
+        default=True,
+        help_text='Redact PII (SSNs, credit cards, etc.) before sending to LLM providers.'
+    )
+
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+        help_text='Last user to update settings.'
+    )
+
+    class Meta:
+        app_label = 'studio_models'
+        verbose_name = 'Site Settings'
+        verbose_name_plural = 'Site Settings'
+
+    @classmethod
+    def get(cls):
+        """Get or create the singleton settings instance."""
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def save(self, *args, **kwargs):
+        self.pk = 1  # Enforce singleton
+        super().save(*args, **kwargs)

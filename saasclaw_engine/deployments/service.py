@@ -1325,24 +1325,44 @@ def _deploy_environment(project: Project, environment_name: str, triggered_by=No
         deployment.save(update_fields=['git_commit_sha'])
 
         # --- NIST AI RMF: Secret scanning (after clone, before build) ---
-        secret_findings = _scan_for_secrets(repo_path)
-        if secret_findings:
-            logger.warning('Secret scan found %d issue(s) for %s', len(secret_findings), project.slug)
-            with log_file.open('a', encoding='utf-8') as handle:
-                handle.write(f'\n=== SECRET SCAN ({len(secret_findings)} finding(s)) ===\n')
-                for finding in secret_findings:
-                    handle.write(f'  WARNING: {finding}\n')
-                handle.write('=== END SECRET SCAN ===\n\n')
+        from saasclaw_engine.studio_models.models import SiteSettings
+        _site = SiteSettings.get()
+
+        if _site.secret_scan_enabled:
+            secret_findings = _scan_for_secrets(repo_path)
+            if secret_findings:
+                logger.warning('Secret scan found %d issue(s) for %s', len(secret_findings), project.slug)
+                with log_file.open('a', encoding='utf-8') as handle:
+                    handle.write(f'\n=== SECRET SCAN ({len(secret_findings)} finding(s)) ===\n')
+                    for finding in secret_findings:
+                        handle.write(f'  WARNING: {finding}\n')
+                    handle.write('=== END SECRET SCAN ===\n\n')
+        else:
+            secret_findings = []
 
         # --- NIST AI RMF: Dependency scanning (after build, before publish) ---
-        dep_findings = _scan_dependencies(repo_path)
-        if dep_findings:
-            logger.warning('Dependency scan found %d issue(s) for %s', len(dep_findings), project.slug)
-            with log_file.open('a', encoding='utf-8') as handle:
-                handle.write(f'\n=== DEPENDENCY SCAN ({len(dep_findings)} issue(s)) ===\n')
-                for finding in dep_findings:
-                    handle.write(f'  WARNING: {finding}\n')
-                handle.write('=== END DEPENDENCY SCAN ===\n\n')
+        if _site.dependency_scan_enabled:
+            dep_findings = _scan_dependencies(repo_path)
+            if dep_findings:
+                logger.warning('Dependency scan found %d issue(s) for %s', len(dep_findings), project.slug)
+                with log_file.open('a', encoding='utf-8') as handle:
+                    handle.write(f'\n=== DEPENDENCY SCAN ({len(dep_findings)} issue(s)) ===\n')
+                    for finding in dep_findings:
+                        handle.write(f'  WARNING: {finding}\n')
+                    handle.write('=== END DEPENDENCY SCAN ===\n\n')
+        else:
+            dep_findings = []
+
+        # Block deploy if findings exist and block is enabled
+        if _site.block_deploy_on_findings and (secret_findings or dep_findings):
+            logger.error("Deploy blocked due to security findings: secrets=%d deps=%d for %s",
+                          len(secret_findings), len(dep_findings), project.slug)
+            deployment.status = Deployment.Status.FAILED
+            deployment.error_message = f"Deploy blocked: {len(secret_findings)} secret(s) and {len(dep_findings)} dependency issue(s) found."
+            deployment.finished_at = dj_timezone.now()
+            deployment.deploy_log_object_key = _tail_text(log_file)
+            deployment.save(update_fields=['status', 'error_message', 'finished_at', 'deploy_log_object_key'])
+            raise RuntimeError(deployment.error_message)
 
         if environment.runtime_kind == Environment.RuntimeKind.DJANGO:
             _deploy_django_environment(project, environment, deployment, repo_path, log_file)
