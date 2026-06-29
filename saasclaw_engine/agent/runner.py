@@ -328,6 +328,7 @@ Tools: {tools_str}
 
 Rules:
 - The file inventory above shows what exists. Do NOT re-read files you don't need to edit.
+- For files over 200 lines, use start_line and end_line to read in sections of ~200 lines. Never try to read a massive file all at once.
 - For small changes, use replace_in_file (search/replace blocks) instead of write_file.
 - Use write_file only for new files or complete rewrites.
 - Use web_search to find current docs or solutions.

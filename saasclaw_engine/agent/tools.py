@@ -14,7 +14,7 @@ import urllib.parse
 from html.parser import HTMLParser
 
 # Max output size per tool call (truncated if exceeded)
-MAX_OUTPUT = 5000
+MAX_OUTPUT = 20000
 
 # Track files read in the current agent turn to prevent re-read loops
 _read_cache: set = set()
@@ -39,8 +39,12 @@ def _safe_path(workspace_path: str, rel_path: str) -> str:
 # File tools
 # ---------------------------------------------------------------------------
 
-def read_file(workspace_path: str, path: str) -> str:
-    """Read a file from the workspace."""
+def read_file(workspace_path: str, path: str, start_line: int = 0, end_line: int = 0) -> str:
+    """Read a file from the workspace.
+    
+    Optional start_line/end_line (1-indexed) for reading specific sections of large files.
+    If omitted, reads the entire file (truncated at MAX_OUTPUT).
+    """
     full = _safe_path(workspace_path, path)
     if not os.path.isfile(full):
         return f"Error: '{path}' is not a file or does not exist."
@@ -64,14 +68,29 @@ def read_file(workspace_path: str, path: str) -> str:
     
     try:
         with open(full, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
-        if len(content) > MAX_OUTPUT:
-            truncated = content[:MAX_OUTPUT]
-            lines_shown = truncated.count('\n') + 1
-            total_lines = content.count('\n') + 1
-            remaining = total_lines - lines_shown
-            return truncated + f"\n\n... (truncated at line {lines_shown} of {total_lines}, {remaining} more lines remaining). Use replace_in_file for edit specific sections."
-        return content
+            if start_line or end_line:
+                # Paginated read: read specific line range
+                all_lines = f.readlines()
+                total = len(all_lines)
+                start = max(1, start_line) - 1  # convert to 0-indexed
+                end = end_line if end_line else total
+                selected = all_lines[start:end]
+                content = ''.join(selected)
+                shown_start = start + 1
+                shown_end = min(end, total)
+                header = f"[Lines {shown_start}-{shown_end} of {total}]\n"
+                if end < total:
+                    return header + content + f"\n... ({total - end} more lines after {shown_end}). Read with start_line={end + 1}."
+                return header + content
+            else:
+                content = f.read()
+                total_lines = content.count('\n') + 1
+                if len(content) > MAX_OUTPUT:
+                    truncated = content[:MAX_OUTPUT]
+                    lines_shown = truncated.count('\n') + 1
+                    remaining = total_lines - lines_shown
+                    return truncated + f"\n\n... (truncated at line {lines_shown} of {total_lines}, {remaining} more lines remaining). Use start_line={lines_shown + 1} to read the rest, or replace_in_file to edit specific sections."
+                return content
     except Exception as exc:
         return f"Error reading file: {exc}"
 
@@ -791,11 +810,13 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the contents of a file in the workspace.",
+            "description": "Read the contents of a file in the workspace. For large files (>200 lines), use start_line and end_line to read in sections of ~200 lines at a time.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Relative path to the file."},
+                    "start_line": {"type": "integer", "description": "Starting line number (1-indexed). Use for paginated reads of large files.", "default": 0},
+                    "end_line": {"type": "integer", "description": "Ending line number (exclusive). 0 = read to end.", "default": 0},
                 },
                 "required": ["path"],
             },
@@ -1026,7 +1047,7 @@ def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = 
             if b in cmd:
                 return f"Error: blocked command pattern '{b.strip()}'."
     handlers = {
-        "read_file": lambda: read_file(workspace_path, args.get("path", "")),
+        "read_file": lambda: read_file(workspace_path, args.get("path", ""), int(args.get("start_line", 0)), int(args.get("end_line", 0))),
         "write_file": lambda: write_file(workspace_path, args.get("path", ""), args.get("content", "")),
         "replace_in_file": lambda: replace_in_file(workspace_path, args.get("path", ""), args.get("edits", [])),
         "list_files": lambda: list_files(workspace_path, args.get("path", ".")),
