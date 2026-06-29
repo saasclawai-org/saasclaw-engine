@@ -339,7 +339,8 @@ Rules:
 - Be concise in explanations. Maximum 3 sentences before or after a code change.
 - Use update_todos to plan tasks before starting work and mark items done as you complete them.
 - NEVER ask the user for permission or confirmation. Just plan and execute. Asking "Shall I proceed?" or "Want me to continue?" blocks the user for the entire duration of your tool calls. Trust the user's initial request and build it.
-- STEP-BY-STEP EXECUTION: For tasks involving 3+ files or multiple phases (scaffolding, logic, styling, data, tests), break the work into numbered steps and execute them sequentially. Write each step's files, then commit before moving to the next step. This gives users visible progress and prevents context loss. Example: Step 1 - create project structure and config → Step 2 - implement core logic → Step 3 - add UI/views → Step 4 - tests → Step 5 - final polish. Commit between steps."""
+- STEP-BY-STEP EXECUTION: For tasks involving 3+ files or multiple phases (scaffolding, logic, styling, data, tests), break the work into numbered steps and execute them sequentially. Write each step's files, then commit before moving to the next step. This gives users visible progress and prevents context loss. Example: Step 1 - create project structure and config → Step 2 - implement core logic → Step 3 - add UI/views → Step 4 - tests → Step 5 - final polish. Commit between steps.
+- FILE SIZE DISCIPLINE: Never create files over 500 lines. If editing a file that's already large, extract logic into separate modules FIRST before adding more. Large monolithic files cause timeouts, make diffs unreadable, and prevent reuse. When in doubt, split."""
 
 
 def _scan_project_files(workspace_path: str) -> str:
@@ -587,11 +588,27 @@ def _scan_codebase_context(workspace_path: str) -> str:
     if any("Django" in h for h in hints):
         hints.append("")
         hints.append("Architecture: keep views.py thin (request/response only).")
-        hints.append("Business logic → services.py or services/ package.")
+        hints.append("Business logic → services.py or services/ package (one service per domain).")
         hints.append("Complex queries → model methods or managers, not inline ORM in views.")
         hints.append("Forms/validation → forms.py.")
+        hints.append("Permissions/authorization → policies.py or policies/ package (one policy per domain).")
         hints.append("Constants → a constants.py or settings.")
         hints.append("Never put imports, helpers, or business logic at the top of views.py.")
+        hints.append("")
+        hints.append("File size limits (CRITICAL):")
+        hints.append("- NEVER create files over 500 lines. If a file is growing past 500 lines, SPLIT IT.")
+        hints.append("- models.py: one model per concern. If models.py exceeds 300 lines, split into models/ package.")
+        hints.append("- views.py: one view per URL. If views.py exceeds 200 lines, split into views/ package.")
+        hints.append("- services.py: if it exceeds 200 lines, convert to services/ package with one file per domain.")
+        hints.append("")
+        hints.append("Django conventions:")
+        hints.append("- Each app should have: models.py, views.py (or views/), services.py (or services/), urls.py, admin.py, apps.py")
+        hints.append("- Views: parse request → call service → return response. No ORM queries in views.")
+        hints.append("- Services: contain all business logic and side effects. Raise exceptions for error cases.")
+        hints.append("- Policies: contain permission checks (can_user_edit_project, can_deploy, etc.). Import in views.")
+        hints.append("- Models: data representation and relationships only. Custom managers for table-level queries.")
+        hints.append("- Tests: mirror app structure (tests/test_models.py, tests/test_views.py, tests/test_services.py).")
+        hints.append("- Never import models across apps directly — use service layer methods.")
 
         hints.append("Testing:")
         hints.append("- Test command: python manage.py test --settings=config.test_settings")
@@ -617,6 +634,29 @@ def _scan_codebase_context(workspace_path: str) -> str:
         hints.append("Data access → separate db/ or models/ module.")
         hints.append("API handlers → validate input, call service, format response.")
         hints.append("Shared utilities → utils/ or lib/.")
+        hints.append("")
+        hints.append("File size limits (CRITICAL):")
+        hints.append("- NEVER create files over 500 lines. If a file is growing past 500 lines, SPLIT IT.")
+        hints.append("- React components: one component per file. If a component exceeds 200 lines, extract sub-components into separate files.")
+        hints.append("- page.tsx/page.jsx: keep under 150 lines. Extract game/app logic into lib/, components/, or hooks/ directories.")
+        hints.append("- A monolithic page.tsx with embedded game logic, state, and UI is NEVER acceptable.")
+        hints.append("")
+        hints.append("Next.js/React conventions:")
+        hints.append("- src/app/page.tsx → thin shell that imports and composes components. No business logic here.")
+        hints.append("- src/components/ → one component per file, named match (e.g., GameBoard.tsx, not index.tsx)")
+        hints.append("- src/lib/ or src/services/ → game rules, API calls, business logic, data transformations")
+        hints.append("- src/hooks/ → custom React hooks (useGameState, usePlayer, etc.)")
+        hints.append("- src/types/ → shared TypeScript interfaces and types")
+        hints.append("- src/app/api/<name>/route.ts → API routes, one concern per route, keep under 100 lines")
+        hints.append("- State management: useReducer for complex state (games, multi-step flows). Lift state to parent, pass via props.")
+        hints.append("- NEVER inline all game/app logic in a single useState or useEffect in page.tsx.")
+        hints.append("- Extract reusable logic into custom hooks so components stay declarative.")
+        hints.append("- Use barrel exports (index.ts) only for directories with 3+ modules.")
+        hints.append("")
+        hints.append("File splitting rules:")
+        hints.append("- If adding a new game/feature: create src/components/GameName.tsx + src/lib/gameName.ts (rules/logic) + add to page.tsx as import.")
+        hints.append("- If editing page.tsx and it's already 150+ lines: REFACTOR by extracting logic to lib/ and components/ BEFORE adding more.")
+        hints.append("- If a single component needs multiple sub-views: create a src/components/GameName/ directory with separate files.")
     elif any("Rust" in h for h in hints):
         hints.append("")
         hints.append("Architecture: keep main.rs / handlers thin.")
@@ -955,7 +995,70 @@ def _scan_codebase_context(workspace_path: str) -> str:
 
         hints.append("")
         hints.append("Testing: use SQLite in-memory, NOT from /srv/saasclaw/projects/")
-        hints.append("Architecture: keep views thin, logic in services/")
+        hints.append("")
+        hints.append("Architecture: keep views.py thin (request/response only).")
+        hints.append("Business logic → services.py or services/ package (one service per domain).")
+        hints.append("Complex queries → model methods or managers, not inline ORM in views.")
+        hints.append("Forms/validation → forms.py.")
+        hints.append("Permissions/authorization → policies.py or policies/ package.")
+        hints.append("Never put imports, helpers, or business logic at the top of views.py.")
+        hints.append("")
+        hints.append("File size limits (CRITICAL):")
+        hints.append("- NEVER create files over 500 lines. Split if growing past 500.")
+        hints.append("- models.py > 300 lines → split into models/ package.")
+        hints.append("- views.py > 200 lines → split into views/ package.")
+        hints.append("- services.py > 200 lines → convert to services/ package.")
+        hints.append("")
+        hints.append("Django conventions:")
+        hints.append("- Views: parse request → call service → return response. No ORM in views.")
+        hints.append("- Services: all business logic and side effects. Raise exceptions for errors.")
+        hints.append("- Policies: permission checks (can_user_edit, can_deploy, etc.). Import in views.")
+        hints.append("- Models: data + relationships only. Custom managers for table-level queries.")
+        hints.append("- Tests: tests/test_models.py, tests/test_views.py, tests/test_services.py.")
+        hints.append("- Never import models across apps directly — use service layer.")
+
+    # --- Phase 5b: Next.js/React architecture conventions ---
+    if project_type in ("Next.js", "React", "Vite", "Express"):
+        hints.append("")
+        hints.append("Architecture: keep route handlers and pages thin.")
+        hints.append("")
+        hints.append("File size limits (CRITICAL):")
+        hints.append("- NEVER create files over 500 lines. Split if growing past 500.")
+        hints.append("- page.tsx/page.jsx: keep under 150 lines. Extract logic to lib/, components/, hooks/.")
+        hints.append("- A monolithic page.tsx with embedded game/app logic is NEVER acceptable.")
+        hints.append("- React components: one per file. If over 200 lines, extract sub-components.")
+        hints.append("")
+        hints.append("Next.js/React conventions:")
+        hints.append("- src/app/page.tsx → thin shell, imports and composes components. No business logic.")
+        hints.append("- src/components/ → one component per file (GameBoard.tsx, not index.tsx)")
+        hints.append("- src/lib/ or src/services/ → game rules, API calls, business logic, data transforms")
+        hints.append("- src/hooks/ → custom hooks (useGameState, usePlayer, etc.)")
+        hints.append("- src/types/ → shared TypeScript interfaces and types")
+        hints.append("- src/app/api/<name>/route.ts → one concern per route, under 100 lines")
+        hints.append("- State: useReducer for complex state. Lift to parent, pass via props.")
+        hints.append("- NEVER inline all game/app logic in a single useState in page.tsx.")
+        hints.append("- Extract reusable logic into custom hooks so components stay declarative.")
+        hints.append("")
+        hints.append("File splitting rules:")
+        hints.append("- New game/feature: src/components/GameName.tsx + src/lib/gameName.ts + import in page.tsx")
+        hints.append("- If page.tsx is already 150+ lines: REFACTOR by extracting to lib/ and components/ BEFORE adding more.")
+        hints.append("- Multiple sub-views: create src/components/GameName/ directory with separate files.")
+
+    # --- Phase 5c: Go conventions ---
+    if project_type == "Go":
+        hints.append("")
+        hints.append("Architecture: keep handlers thin.")
+        hints.append("Business logic → internal/ or service/ package.")
+        hints.append("Data access → store/ or repository package.")
+        hints.append("File size: never exceed 500 lines. Split handlers, services, models into separate files.")
+
+    # --- Phase 5d: Rust conventions ---
+    if project_type == "Rust":
+        hints.append("")
+        hints.append("Architecture: keep main.rs / handlers thin.")
+        hints.append("Business logic → separate modules.")
+        hints.append("Data access → model or repository modules.")
+        hints.append("File size: never exceed 500 lines. Split into modules by concern.")
 
     # --- Phase 6: Key files listing ---
     key_files = []
