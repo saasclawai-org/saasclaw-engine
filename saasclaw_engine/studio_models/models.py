@@ -238,6 +238,10 @@ class SiteSettings(models.Model):
         default=True,
         help_text='Redact PII (SSNs, credit cards, etc.) before sending to LLM providers.'
     )
+    require_training_before_project = models.BooleanField(
+        default=False,
+        help_text='When enabled, users must pass all required training modules before creating projects.'
+    )
 
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
@@ -281,3 +285,81 @@ class CustomPiiPattern(models.Model):
 
     def __str__(self):
         return f'{self.name} → {self.placeholder}'
+
+
+class TrainingModule(models.Model):
+    """Staff-authored training module with quiz."""
+    title = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=200, unique=True, blank=True)
+    description = models.TextField(blank=True, help_text='Short summary shown in module list')
+    content = models.TextField(help_text='Markdown content for the training module')
+    order = models.IntegerField(default=0, help_text='Display order (lower first)')
+    is_required = models.BooleanField(default=True, help_text='Required modules must be passed before project creation (when toggle is on)')
+    is_published = models.BooleanField(default=True)
+    pass_threshold = models.IntegerField(default=80, help_text='Minimum score (%) to pass')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey('auth.User', null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        app_label = 'studio_models'
+        verbose_name = 'Training Module'
+        verbose_name_plural = 'Training Modules'
+        ordering = ['order', 'title']
+
+    def __str__(self):
+        return self.title
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            from django.utils.text import slugify
+            base = slugify(self.title)
+            slug = base
+            n = 2
+            while TrainingModule.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+                slug = f'{base}-{n}'
+                n += 1
+            self.slug = slug
+        super().save(*args, **kwargs)
+
+
+class TrainingQuestion(models.Model):
+    """Multiple-choice question for a training module."""
+    module = models.ForeignKey(TrainingModule, related_name='questions', on_delete=models.CASCADE)
+    text = models.TextField(help_text='The question text')
+    option_a = models.CharField(max_length=500)
+    option_b = models.CharField(max_length=500)
+    option_c = models.CharField(max_length=500)
+    option_d = models.CharField(max_length=500, blank=True, help_text='Optional 4th option')
+    correct_answer = models.CharField(max_length=1, choices=[('A','A'),('B','B'),('C','C'),('D','D')], help_text='Correct option letter')
+    order = models.IntegerField(default=0)
+    explanation = models.TextField(blank=True, help_text='Shown after answering')
+
+    class Meta:
+        app_label = 'studio_models'
+        verbose_name = 'Training Question'
+        verbose_name_plural = 'Training Questions'
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        return f'{self.module.title}: {self.text[:60]}'
+
+
+class TrainingCompletion(models.Model):
+    """Records when a user completes a training module."""
+    user = models.ForeignKey('auth.User', on_delete=models.CASCADE)
+    module = models.ForeignKey(TrainingModule, on_delete=models.CASCADE)
+    score = models.IntegerField(help_text='Score percentage (0-100)')
+    passed = models.BooleanField(default=False)
+    answers = models.JSONField(default=dict, blank=True, help_text='Question ID → selected answer')
+    completed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = 'studio_models'
+        verbose_name = 'Training Completion'
+        verbose_name_plural = 'Training Completions'
+        unique_together = [('user', 'module')]
+        ordering = ['-completed_at']
+
+    def __str__(self):
+        return f'{self.user.username} — {self.module.title} ({self.score}%)'
