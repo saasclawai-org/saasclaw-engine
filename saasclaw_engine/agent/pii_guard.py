@@ -102,10 +102,32 @@ PATTERNS = [
 ]
 
 
+def _load_custom_patterns():
+    """Load custom PII patterns from database. Returns list of (regex, placeholder, label) tuples."""
+    try:
+        from saasclaw_engine.studio_models.models import CustomPiiPattern
+        custom = []
+        for p in CustomPiiPattern.objects.filter(is_active=True):
+            try:
+                compiled = re.compile(p.regex)
+                custom.append((compiled, p.placeholder, p.name))
+            except re.error as e:
+                logger.warning("Invalid custom PII pattern '%s': %s", p.name, e)
+        return custom
+    except Exception as e:
+        logger.debug("Could not load custom PII patterns: %s", e)
+        return []
+
+
+def get_active_patterns():
+    """Return built-in patterns plus any active custom patterns from DB."""
+    return PATTERNS + _load_custom_patterns()
+
+
 def detect_pii(text: str) -> list[dict]:
     """Scan text and return a list of detected PII matches."""
     findings = []
-    for regex, placeholder, label in PATTERNS:
+    for regex, placeholder, label in get_active_patterns():
         for m in regex.finditer(text):
             findings.append({
                 'label': label,

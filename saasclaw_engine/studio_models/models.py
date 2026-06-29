@@ -259,3 +259,25 @@ class SiteSettings(models.Model):
     def save(self, *args, **kwargs):
         self.pk = 1  # Enforce singleton
         super().save(*args, **kwargs)
+
+
+class CustomPiiPattern(models.Model):
+    """Staff-defined custom PII detection pattern."""
+    name = models.CharField(max_length=100, help_text='Human-readable label (e.g. "French SSN")')
+    regex = models.TextField(help_text='Python regex pattern (without delimiters)')
+    placeholder = models.CharField(max_length=50, default='{{CUSTOM}}', help_text='Replacement text, e.g. {{FR_SSN}}')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL
+    )
+
+    class Meta:
+        app_label = 'studio_models'
+        verbose_name = 'Custom PII Pattern'
+        verbose_name_plural = 'Custom PII Patterns'
+        ordering = ['name']
+
+    def __str__(self):
+        return f'{self.name} → {self.placeholder}'
