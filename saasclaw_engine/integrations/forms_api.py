@@ -164,7 +164,9 @@ def submit_form(request, slug):
         except (json.JSONDecodeError, UnicodeDecodeError):
             return HttpResponseBadRequest('Invalid JSON body.')
     else:
-        form_data = dict(request.POST)
+        # QueryDict values are lists; unwrap single values
+        raw = dict(request.POST)
+        form_data = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in raw.items()}
 
     if not form_data:
         return HttpResponseBadRequest('No form data received.')
