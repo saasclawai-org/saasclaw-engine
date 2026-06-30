@@ -59,6 +59,7 @@ class Project(models.Model):
     hugo_theme = models.CharField(max_length=128, blank=True, help_text='Hugo theme name (for Hugo framework projects)')
     context_cache = models.TextField(blank=True, help_text='Cached project context for wizard')
     context_cache_updated_at = models.DateTimeField(null=True, blank=True)
+    form_api_key = models.CharField(max_length=64, blank=True, editable=False, help_text='API key for public form submissions')
     risk_tier = models.CharField(max_length=10, choices=RiskTier.choices, default=RiskTier.LOW)
     last_deployed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -66,6 +67,14 @@ class Project(models.Model):
 
     class Meta:
         ordering = ['name']
+
+    def get_or_create_form_api_key(self):
+        """Return the existing form API key, generating one if blank."""
+        if not self.form_api_key:
+            import secrets
+            self.form_api_key = secrets.token_urlsafe(40)
+            self.save(update_fields=['form_api_key'])
+        return self.form_api_key
 
     def update_risk_tier(self, data_sensitivity: str = '') -> str:
         """Auto-assign risk tier based on data sensitivity classification.
