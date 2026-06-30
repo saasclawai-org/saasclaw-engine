@@ -578,26 +578,34 @@ User-defined environment variables (set in the studio UI) override defaults and 
 
 ### Form API for Static Sites
 
-Static sites can submit form data via a public API endpoint — no backend needed in the project itself.
+Static sites can submit form data via a secure API endpoint — no backend needed in the project itself.
 
 **Endpoint:** `POST /api/forms/{project-slug}/`
 
-- Accepts JSON or standard form-encoded POST data
-- Stores submissions in the `FormSubmission` model (project-scoped, JSON fields)
-- Records IP address, user agent, and referrer
-- Built-in honeypot anti-spam (hidden `website` field silently drops bot submissions)
-- 100KB size limit per submission
+**Security (all three layers enforced):**
+
+| Layer | Mechanism | Details |
+|-------|-----------|----------|
+| **API key** | `X-Form-Key` header or `_form_key` body field | Per-project, auto-generated 40-char token. Regenerate from studio UI; old key invalidated immediately. |
+| **Rate limiting** | Redis-backed counter | 10 submissions/min per IP per project. Returns `429` when exceeded. |
+| **Origin validation** | `Origin`/`Referer` header check | Rejects requests from domains not matching the project's deployed domains. |
+
+Additional: honeypot anti-spam, 100KB size limit, blocked for suspended/archived projects.
+
+**Response codes:** `201` success, `403` invalid key or blocked origin, `404` project not found, `429` rate limited.
 
 **Management:**
 - `GET /api/forms/{slug}/list/` — list submissions (project owner/staff only)
 - `DELETE /api/forms/{slug}/list/` — bulk delete all submissions
 - `GET /api/forms/{slug}/{id}/` — single submission detail
 - `DELETE /api/forms/{slug}/{id}/` — delete a single submission
+- Per-project API key generated via `Project.get_or_create_form_api_key()`
 
 **Example usage in a static site:**
 ```html
 <form action="https://app.saasclaw.ai/api/forms/my-project/" method="POST">
   <input type="hidden" name="website" value=""> <!-- honeypot -->
+  <input type="hidden" name="_form_key" value="YOUR_PROJECT_API_KEY">
   <input type="text" name="name" required>
   <input type="email" name="email" required>
   <textarea name="message"></textarea>
@@ -609,7 +617,10 @@ Or via JavaScript:
 ```javascript
 fetch('https://app.saasclaw.ai/api/forms/my-project/', {
   method: 'POST',
-  headers: {'Content-Type': 'application/json'},
+  headers: {
+    'Content-Type': 'application/json',
+    'X-Form-Key': 'YOUR_PROJECT_API_KEY'
+  },
   body: JSON.stringify({name: 'Jane', email: 'jane@example.com', message: 'Hello!'})
 }).then(r => r.json()).then(data => console.log(data));
 ```
