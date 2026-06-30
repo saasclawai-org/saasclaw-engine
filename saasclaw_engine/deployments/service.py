@@ -1143,9 +1143,34 @@ def _deploy_node_ssr_environment(project: Project, environment: Environment, dep
     if build_cmd and build_cmd != 'none':
         _run_command(build_cmd, repo_path, log_file, env=build_env or None)
 
-    # Set PORT env for the app
+    # Provision PostgreSQL database
+    env_suffix = f'_{environment.name}' if environment.name != 'preview' else ''
+    default_db_name = f'saasclaw_{project.slug.replace("-", "_")}{env_suffix}'
+    default_db_user = f'sc_{project.slug.replace("-", "_")}{env_suffix}'[:32]
+    default_db_password = f'saasclaw-{project.slug}{env_suffix}-db'
+
     env_file = runtime_root / '.env'
-    env_lines = [f'PORT={port}', f'NODE_ENV=production']
+    existing_env = _load_env_file(env_file)
+    db_name = existing_env.get('POSTGRES_DB') or default_db_name
+    db_user = existing_env.get('POSTGRES_USER') or default_db_user
+    db_password = existing_env.get('POSTGRES_PASSWORD') or default_db_password
+    db_host = existing_env.get('POSTGRES_HOST') or '127.0.0.1'
+    db_port = existing_env.get('POSTGRES_PORT') or '5432'
+
+    _ensure_postgres_database(db_name, db_user, db_password, log_file)
+
+    # Standard DATABASE_URL for Node ORMs (Prisma, Drizzle, Knex, Sequelize, etc.)
+    database_url = f'postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}'
+    env_lines = [
+        f'PORT={port}',
+        f'NODE_ENV=production',
+        f'DATABASE_URL={database_url}',
+        f'POSTGRES_DB={db_name}',
+        f'POSTGRES_USER={db_user}',
+        f'POSTGRES_PASSWORD={db_password}',
+        f'POSTGRES_HOST={db_host}',
+        f'POSTGRES_PORT={db_port}',
+    ]
     from saasclaw_engine.deployments.models import EnvironmentVariable
     for ev in EnvironmentVariable.objects.filter(environment=environment):
         env_lines.append(f'{ev.key}={ev.value}')
@@ -1238,11 +1263,34 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
     # Ensure .NET SDK
     dotnet = _ensure_dotnet_sdk(log_file)
 
+    # Provision PostgreSQL database
+    env_suffix = f'_{environment.name}' if environment.name != 'preview' else ''
+    default_db_name = f'saasclaw_{project.slug.replace("-", "_")}{env_suffix}'
+    default_db_user = f'sc_{project.slug.replace("-", "_")}{env_suffix}'[:32]
+    default_db_password = f'saasclaw-{project.slug}{env_suffix}-db'
+
+    db_name = existing_env.get('POSTGRES_DB') or default_db_name
+    db_user = existing_env.get('POSTGRES_USER') or default_db_user
+    db_password = existing_env.get('POSTGRES_PASSWORD') or default_db_password
+    db_host = existing_env.get('POSTGRES_HOST') or '127.0.0.1'
+    db_port = existing_env.get('POSTGRES_PORT') or '5432'
+
+    _ensure_postgres_database(db_name, db_user, db_password, log_file)
+
+    database_url = f'postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}'
+
     # Build app settings / env vars
     env_values = dict(existing_env)
     env_values.update({
         'ASPNETCORE_ENVIRONMENT': 'Development' if environment.name == 'preview' else 'Production',
         'ASPNETCORE_URLS': f'http://0.0.0.0:{environment.app_port}',
+        'DATABASE_URL': database_url,
+        'POSTGRES_DB': db_name,
+        'POSTGRES_USER': db_user,
+        'POSTGRES_PASSWORD': db_password,
+        'POSTGRES_HOST': db_host,
+        'POSTGRES_PORT': db_port,
+        'ConnectionStrings__DefaultConnection': database_url,
     })
 
     # Merge user-defined environment variables
