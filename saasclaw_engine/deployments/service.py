@@ -581,6 +581,7 @@ def _deploy_django_environment(project: Project, environment: Environment, deplo
         'POSTGRES_PASSWORD': db_password,
         'POSTGRES_HOST': existing_env.get('POSTGRES_HOST') or '127.0.0.1',
         'POSTGRES_PORT': existing_env.get('POSTGRES_PORT') or '5432',
+        'DATABASE_URL': f'postgresql://{db_user}:{db_password}@{existing_env.get("POSTGRES_HOST") or "127.0.0.1"}:{existing_env.get("POSTGRES_PORT") or "5432"}/{db_name}',
     })
     # Merge user-defined environment variables (override defaults)
     from saasclaw_engine.deployments.models import EnvironmentVariable
