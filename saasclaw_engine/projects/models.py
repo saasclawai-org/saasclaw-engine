@@ -174,3 +174,25 @@ class ProjectSubmission(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.status}) — by {self.requester.username}"
+# Append to saasclaw_engine/projects/models.py
+
+class FormSubmission(models.Model):
+    """Form submissions from static sites via POST /api/forms/{slug}."""
+
+    project = models.ForeignKey(
+        'Project', on_delete=models.CASCADE, related_name='form_submissions'
+    )
+    form_data = models.JSONField(
+        help_text='Submitted form fields as JSON'
+    )
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    # Optional metadata
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=500, blank=True)
+    referrer = models.URLField(blank=True)
+
+    class Meta:
+        ordering = ['-submitted_at']
+
+    def __str__(self):
+        return f"FormSubmission #{self.id} for {self.project.slug}"
