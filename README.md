@@ -522,6 +522,108 @@ commit_and_push_repo(project, message="Add new feature", token=token)
 | `saasclaw_engine.studio_models` | AgentSession, ProviderKey, Workspace, Todo, TokenUsage models |
 | `saasclaw_engine.help_search` | RAG-based help search using ChromaDB |
 
+## How Projects Store Data
+
+Every deployed project on SaaSClaw gets access to a dedicated PostgreSQL database on the local server. This happens automatically — no manual database setup required.
+
+### Automatic Database Provisioning
+
+When a project is deployed, the deploy pipeline calls `_ensure_postgres_database()` which:
+
+1. Connects to the local PostgreSQL instance as `saasclaw_admin`
+2. Creates a dedicated role and database if they don't exist
+3. Injects connection details as environment variables into the project's `.env` file
+
+Preview and production environments get **separate databases** — no shared state:
+
+| Environment | Database Name | Role | Password |
+|-------------|-------------|------|----------|
+| Preview | `saasclaw_{slug}` | `sc_{slug}` | Auto-generated |
+| Production | `saasclaw_{slug}_production` | `sc_{slug}_production` | Auto-generated |
+
+### Environment Variables
+
+Each runtime receives these env vars in its `.env` file:
+
+| Variable | Description | Python | Node SSR | .NET |
+|----------|-------------|--------|----------|------|
+| `DATABASE_URL` | Standard connection string | ✅ | ✅ | ✅ |
+| `POSTGRES_DB` | Database name | ✅ | ✅ | ✅ |
+| `POSTGRES_USER` | Role name | ✅ | ✅ | ✅ |
+| `POSTGRES_PASSWORD` | Role password | ✅ | ✅ | ✅ |
+| `POSTGRES_HOST` | Host (default `127.0.0.1`) | ✅ | ✅ | ✅ |
+| `POSTGRES_PORT` | Port (default `5432`) | ✅ | ✅ | ✅ |
+| `ConnectionStrings__DefaultConnection` | .NET convention | — | — | ✅ |
+
+User-defined environment variables (set in the studio UI) override defaults and persist across redeploys.
+
+### Per-Runtime Details
+
+**Python (Django, Flask, FastAPI):**
+- Django projects get automatic `manage.py migrate` and admin user creation on deploy
+- Flask/htmx starter templates include `flask-sqlalchemy` and `flask-migrate` pre-configured
+- Templates use an app factory pattern that reads `DATABASE_URL` first, then builds from `POSTGRES_*` vars
+
+**Node SSR (Next.js, Nuxt):**
+- `DATABASE_URL` is compatible with Prisma, Drizzle, Knex, Sequelize, and most Node ORMs
+- No automatic migrations — the project handles its own schema management
+
+**.NET:**
+- `ConnectionStrings__DefaultConnection` follows ASP.NET Core convention
+- `appsettings.json` not needed — the deploy pipeline writes all connection info to the `.env` file
+
+**Static Sites (HTML, React, Vue, Svelte, Hugo):**
+- No server-side runtime, so no database connection
+- Use the **Form API** to accept form submissions from static sites (see below)
+
+### Form API for Static Sites
+
+Static sites can submit form data via a public API endpoint — no backend needed in the project itself.
+
+**Endpoint:** `POST /api/forms/{project-slug}/`
+
+- Accepts JSON or standard form-encoded POST data
+- Stores submissions in the `FormSubmission` model (project-scoped, JSON fields)
+- Records IP address, user agent, and referrer
+- Built-in honeypot anti-spam (hidden `website` field silently drops bot submissions)
+- 100KB size limit per submission
+
+**Management:**
+- `GET /api/forms/{slug}/list/` — list submissions (project owner/staff only)
+- `DELETE /api/forms/{slug}/list/` — bulk delete all submissions
+- `GET /api/forms/{slug}/{id}/` — single submission detail
+- `DELETE /api/forms/{slug}/{id}/` — delete a single submission
+
+**Example usage in a static site:**
+```html
+<form action="https://app.saasclaw.ai/api/forms/my-project/" method="POST">
+  <input type="hidden" name="website" value=""> <!-- honeypot -->
+  <input type="text" name="name" required>
+  <input type="email" name="email" required>
+  <textarea name="message"></textarea>
+  <button type="submit">Send</button>
+</form>
+```
+
+Or via JavaScript:
+```javascript
+fetch('https://app.saasclaw.ai/api/forms/my-project/', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({name: 'Jane', email: 'jane@example.com', message: 'Hello!'})
+}).then(r => r.json()).then(data => console.log(data));
+```
+
+### Data Storage Summary
+
+| Data Type | Storage Location |
+|-----------|----------------|
+| Project metadata, users, sessions | SaaSClaw control plane PostgreSQL (`DATABASE_URL` in settings) |
+| Project application data | Per-project PostgreSQL on local server (auto-provisioned) |
+| Static site form submissions | SaaSClaw control plane PostgreSQL (`FormSubmission` model) |
+| Uploaded files / build artifacts | MinIO (S3-compatible object storage) |
+| Code | Git bare repos + worktrees |
+
 ## Supported Frameworks
 
 Vite (React/Vue/Svelte), Next.js (SSR), Django, Flask, FastAPI, HTMX, Hugo, .NET/C#, static HTML
