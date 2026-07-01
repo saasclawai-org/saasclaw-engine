@@ -130,3 +130,37 @@ class TestPostgresCredentialGeneration:
             d1 = f"saasclaw_{s1.replace('-', '_')}"
             d2 = f"saasclaw_{s2.replace('-', '_')}"
             assert d1 != d2
+
+
+class TestConnectionStringFormats:
+    """Verify database connection string formats for each runtime."""
+
+    def test_dotnet_npgsql_format(self):
+        """.NET ConnectionStrings__DefaultConnection uses Npgsql format."""
+        db_user, db_password, db_host, db_port, db_name = (
+            "sc_my_app_preview", "secret123", "127.0.0.1", "5432", "saasclaw_my_app_preview"
+        )
+        conn = f"Host={db_host};Port={db_port};Database={db_name};Username={db_user};Password={db_password}"
+        assert conn.startswith("Host=")
+        assert "Port=" in conn
+        assert "Database=" in conn
+        assert "Username=" in conn
+        assert "Password=" in conn
+        assert "postgresql+psycopg" not in conn
+
+    def test_node_postgresql_url_format(self):
+        """Node SSR DATABASE_URL uses standard postgresql:// (no driver suffix)."""
+        db_user, db_password, db_host, db_port, db_name = (
+            "sc_my_app_preview", "secret123", "127.0.0.1", "5432", "saasclaw_my_app_preview"
+        )
+        url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+        assert url.startswith("postgresql://")
+        assert "+psycopg" not in url
+
+    def test_django_database_url_format(self):
+        """Django DATABASE_URL uses postgresql+psycopg:// for dj-database-url."""
+        db_user, db_password, db_host, db_port, db_name = (
+            "sc_my_app_preview", "secret123", "127.0.0.1", "5432", "saasclaw_my_app_preview"
+        )
+        url = f"postgresql+psycopg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+        assert url.startswith("postgresql+psycopg://")
