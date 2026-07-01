@@ -1,12 +1,12 @@
 import json
 import logging
 import re
-
-from django.conf import settings
+import secrets
 import shutil
 import subprocess
 from pathlib import Path
 
+from django.conf import settings
 from django.utils import timezone as dj_timezone
 
 from saasclaw_engine.integrations.github import clone_or_update_repo
@@ -1031,6 +1031,33 @@ def _detect_output_dir(repo_path: Path, build_cmd: str = '') -> str:
 
 def _deploy_static_environment(project: Project, environment: Environment, deployment: Deployment, repo_path: Path, log_file: Path) -> None:
     """Deploy a static site to an environment."""
+    # Provision Postgres database for all projects (including static)
+    db_host, db_port = '127.0.0.1', '5432'
+    db_suffix = f"_{environment.name}" if environment.name != 'preview' else ''
+    db_name = f"saasclaw_{project.slug.replace('-', '_')}{db_suffix}"
+    db_user = f"sc_{project.slug.replace('-', '_')}{db_suffix}"[:32]
+    db_password = secrets.token_urlsafe(24)
+
+    runtime_root = Path(project.workspace_root) / 'runtime' / environment.name
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    env_file = runtime_root / '.env'
+
+    _ensure_postgres_database(db_name, db_user, db_password, log_file)
+
+    database_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+
+    # Merge with any existing env vars
+    existing_env = _load_env_file(env_file)
+    env_values = {**existing_env, **{
+        'POSTGRES_DB': db_name,
+        'POSTGRES_USER': db_user,
+        'POSTGRES_PASSWORD': db_password,
+        'POSTGRES_HOST': db_host,
+        'POSTGRES_PORT': db_port,
+        'DATABASE_URL': database_url,
+    }}
+    _write_text(env_file, _serialize_env_file(env_values))
+
     build_cmd = environment.build_command or 'echo "No build step"'
 
     # Determine output_dir: explicit env field (non-empty) > auto-detect > 'dist'
