@@ -1162,8 +1162,8 @@ def _deploy_node_ssr_environment(project: Project, environment: Environment, dep
 
     _ensure_postgres_database(db_name, db_user, db_password, log_file)
 
-    # Standard DATABASE_URL for Node ORMs (Prisma, Drizzle, Knex, Sequelize, etc.)
-    database_url = f'postgresql+psycopg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}'
+    # Standard DATABASE_URL for Node ORMs (Prisma, Drizzle, Knex, Sequelize, pg, etc.)
+    database_url = f'postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}'
     env_lines = [
         f'PORT={port}',
         f'NODE_ENV=production',
@@ -1280,6 +1280,8 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
 
     _ensure_postgres_database(db_name, db_user, db_password, log_file)
 
+    # Build both connection string formats
+    npgsql_url = f'Host={db_host};Port={db_port};Database={db_name};Username={db_user};Password={db_password}'
     database_url = f'postgresql+psycopg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}'
 
     # Build app settings / env vars
@@ -1293,7 +1295,7 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
         'POSTGRES_PASSWORD': db_password,
         'POSTGRES_HOST': db_host,
         'POSTGRES_PORT': db_port,
-        'ConnectionStrings__DefaultConnection': database_url,
+        'ConnectionStrings__DefaultConnection': npgsql_url,
     })
 
     # Merge user-defined environment variables
