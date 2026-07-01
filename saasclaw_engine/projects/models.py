@@ -1,5 +1,12 @@
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
+
+
+class ActiveProjectManager(models.Manager):
+    """Manager that excludes soft-deleted projects."""
+    def get_queryset(self):
+        return super().get_queryset().filter(deleted_at__isnull=True)
 
 
 class Project(models.Model):
@@ -62,11 +69,30 @@ class Project(models.Model):
     form_api_key = models.CharField(max_length=64, blank=True, editable=False, help_text='API key for public form submissions')
     risk_tier = models.CharField(max_length=10, choices=RiskTier.choices, default=RiskTier.LOW)
     last_deployed_at = models.DateTimeField(null=True, blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True, db_index=True, help_text='Soft delete timestamp — null means active')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = ActiveProjectManager()  # Default manager excludes soft-deleted
+    all_objects = models.Manager()  # Unfiltered manager for admin/internal queries
+
     class Meta:
         ordering = ['name']
+
+    def soft_delete(self):
+        """Mark project as deleted without removing data."""
+        self.deleted_at = timezone.now()
+        self.status = self.Status.ARCHIVED
+        self.save(update_fields=['deleted_at', 'status', 'updated_at'])
+
+    def restore(self):
+        """Restore a soft-deleted project."""
+        self.deleted_at = None
+        self.save(update_fields=['deleted_at', 'updated_at'])
+
+    @property
+    def is_deleted(self):
+        return self.deleted_at is not None
 
     def get_or_create_form_api_key(self):
         """Return the existing form API key, generating one if blank."""
