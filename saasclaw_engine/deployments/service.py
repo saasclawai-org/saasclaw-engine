@@ -155,7 +155,7 @@ def _refresh_repo_checkout_for_deploy(project: Project, repo_path: Path, log_fil
         from saasclaw_engine.integrations.models import GitHubInstallation
         inst = GitHubInstallation.objects.filter(
             account_name=project.repo_owner
-        ).first() or GitHubInstallation.objects.first()
+        ).first()
         if inst and project.repo_owner and project.repo_name:
             clone_or_update_repo(
                 inst.installation_id, project.repo_owner, project.repo_name,
@@ -174,7 +174,9 @@ def _refresh_repo_checkout_for_deploy(project: Project, repo_path: Path, log_fil
                 from saasclaw_engine.integrations.github import create_installation_access_token, _git_auth_args
                 inst = GitHubInstallation.objects.filter(
                     account_name=project.repo_owner
-                ).first() or GitHubInstallation.objects.first()
+                ).first()
+                if not inst:
+                    logger.warning('No GitHub installation found for owner %s on project %s', project.repo_owner, project.slug)
                 if inst:
                     token = create_installation_access_token(inst.installation_id)
                     authed_url = f'https://x-access-token:{token}@github.com/{project.repo_owner}/{project.repo_name}.git'

@@ -5,7 +5,7 @@ import json
 from django.test import TestCase, RequestFactory
 from django.contrib.auth import get_user_model
 
-from saasclaw_engine.integrations.models import GitHubInstallation
+from saasclaw_engine.integrations.models import GitHubInstallation, InstallationRepository
 from saasclaw_engine.integrations.views import github_webhook
 
 User = get_user_model()
@@ -84,6 +84,61 @@ class GitHubInstallationModelTests(TestCase):
         )
         self.assertEqual(user.github_installations.count(), 2)
 
+    def test_sender_fields(self):
+        inst = GitHubInstallation.objects.create(
+            account_name='acme',
+            installation_id=999,
+            sender_github_id=12345,
+            sender_login='octocat',
+            repository_selection='selected',
+        )
+        self.assertEqual(inst.sender_github_id, 12345)
+        self.assertEqual(inst.sender_login, 'octocat')
+        self.assertEqual(inst.repository_selection, 'selected')
+
+
+class InstallationRepositoryModelTests(TestCase):
+    """Tests for InstallationRepository model."""
+
+    def test_create_repo(self):
+        inst = GitHubInstallation.objects.create(
+            account_name='acme', installation_id=100,
+        )
+        repo = InstallationRepository.objects.create(
+            installation=inst,
+            repo_id=200,
+            repo_name='my-project',
+            full_name='acme/my-project',
+            private=True,
+            default_branch='main',
+        )
+        self.assertEqual(repo.full_name, 'acme/my-project')
+        self.assertEqual(str(repo), 'acme/my-project')
+
+    def test_unique_per_installation(self):
+        inst = GitHubInstallation.objects.create(
+            account_name='acme', installation_id=101,
+        )
+        InstallationRepository.objects.create(
+            installation=inst, repo_id=201, repo_name='a', full_name='acme/a',
+        )
+        with self.assertRaises(Exception):
+            InstallationRepository.objects.create(
+                installation=inst, repo_id=201, repo_name='a-dup', full_name='acme/a',
+            )
+
+    def test_reverse_relation(self):
+        inst = GitHubInstallation.objects.create(
+            account_name='acme', installation_id=102,
+        )
+        InstallationRepository.objects.create(
+            installation=inst, repo_id=301, repo_name='a', full_name='acme/a',
+        )
+        InstallationRepository.objects.create(
+            installation=inst, repo_id=302, repo_name='b', full_name='acme/b',
+        )
+        self.assertEqual(inst.repos.count(), 2)
+
 
 class GitHubWebhookViewTests(TestCase):
     """Tests for the GitHub webhook endpoint."""
@@ -107,22 +162,114 @@ class GitHubWebhookViewTests(TestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_webhook_no_secret_configured(self):
-        request = self.factory.post(
-            '/webhooks/github/',
-            data=json.dumps({}),
-            content_type='application/json',
-            HTTP_X_GITHUB_EVENT='push',
-        )
-        response = github_webhook(request)
-        self.assertEqual(response.status_code, 400)
+        from django.conf import settings
+        old = settings.GITHUB_WEBHOOK_SECRET
+        settings.GITHUB_WEBHOOK_SECRET = ''
+        try:
+            request = self.factory.post(
+                '/webhooks/github/',
+                data=json.dumps({}),
+                content_type='application/json',
+                HTTP_X_GITHUB_EVENT='push',
+            )
+            response = github_webhook(request)
+            self.assertEqual(response.status_code, 400)
+        finally:
+            settings.GITHUB_WEBHOOK_SECRET = old
 
     def test_webhook_empty_body_treated_as_valid(self):
+        from django.conf import settings
+        old = settings.GITHUB_WEBHOOK_SECRET
+        settings.GITHUB_WEBHOOK_SECRET = ''
+        try:
+            request = self.factory.post(
+                '/webhooks/github/',
+                data=b'',
+                content_type='application/json',
+                HTTP_X_GITHUB_EVENT='ping',
+            )
+            # Empty body → '{}' parsed, then hits GITHUB_WEBHOOK_SECRET check
+            response = github_webhook(request)
+            self.assertEqual(response.status_code, 400)
+        finally:
+            settings.GITHUB_WEBHOOK_SECRET = old
+
+    def test_installation_event_creates_record(self):
+        """Webhook creates installation and links to user by username."""
+        User.objects.create_user(username='octocat', password='pass')
+        payload = {
+            'action': 'created',
+            'installation': {
+                'id': 900100,
+                'account': {'login': 'acme-corp', 'type': 'Organization', 'id': 111},
+                'repository_selection': 'selected',
+                'repositories': [
+                    {'id': 1, 'full_name': 'acme-corp/web-app', 'private': True, 'default_branch': 'main'},
+                    {'id': 2, 'full_name': 'acme-corp/api', 'private': False, 'default_branch': 'develop'},
+                ],
+            },
+            'sender': {'id': 55555, 'login': 'octocat'},
+        }
         request = self.factory.post(
             '/webhooks/github/',
-            data=b'',
+            data=json.dumps(payload),
             content_type='application/json',
-            HTTP_X_GITHUB_EVENT='ping',
+            HTTP_X_GITHUB_EVENT='installation',
         )
-        # Empty body → '{}' parsed, then hits GITHUB_WEBHOOK_SECRET check
         response = github_webhook(request)
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 200)
+
+        inst = GitHubInstallation.objects.get(installation_id=900100)
+        self.assertEqual(inst.account_name, 'acme-corp')
+        self.assertEqual(inst.sender_github_id, 55555)
+        self.assertEqual(inst.sender_login, 'octocat')
+        self.assertEqual(inst.repository_selection, 'selected')
+        # Linked via username match
+        self.assertEqual(inst.user.username, 'octocat')
+        # Repos synced
+        self.assertEqual(inst.repos.count(), 2)
+        self.assertTrue(inst.repositories.filter(full_name='acme-corp/web-app').exists())
+        self.assertTrue(inst.repositories.filter(full_name='acme-corp/api').exists())
+
+    def test_installation_deleted_removes_record(self):
+        GitHubInstallation.objects.create(
+            account_name='acme', installation_id=99999,
+        )
+        payload = {
+            'installation': {'id': 99999},
+            'sender': {'id': 1, 'login': 'someone'},
+        }
+        request = self.factory.post(
+            '/webhooks/github/',
+            data=json.dumps(payload),
+            content_type='application/json',
+            HTTP_X_GITHUB_EVENT='installation.deleted',
+        )
+        response = github_webhook(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(GitHubInstallation.objects.filter(installation_id=99999).exists())
+
+    def test_unlinked_installation_has_no_user(self):
+        """Installation without a matching user stays user=None."""
+        payload = {
+            'action': 'created',
+            'installation': {
+                'id': 900200,
+                'account': {'login': 'some-org', 'type': 'Organization', 'id': 222},
+                'repository_selection': 'all',
+                'repositories': [],
+            },
+            'sender': {'id': 99999, 'login': 'nonexistent_user'},
+        }
+        request = self.factory.post(
+            '/webhooks/github/',
+            data=json.dumps(payload),
+            content_type='application/json',
+            HTTP_X_GITHUB_EVENT='installation',
+        )
+        response = github_webhook(request)
+        self.assertEqual(response.status_code, 200)
+
+        inst = GitHubInstallation.objects.get(installation_id=900200)
+        self.assertIsNone(inst.user)
+        self.assertEqual(inst.sender_login, 'nonexistent_user')

@@ -28,3 +28,4 @@ PROJECT_APPROVAL_REQUIRED = False
 # GitHub App settings (for integration tests)
 GITHUB_APP_ID = 12345
 GITHUB_APP_PRIVATE_KEY = 'dummy-key'
+GITHUB_WEBHOOK_SECRET = 'test-webhook-secret'
