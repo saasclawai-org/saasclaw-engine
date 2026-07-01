@@ -16,6 +16,7 @@ dependencies = [
     "httpx>=0.25",
     "presidio-analyzer>=2.2",
     "spacy>=3.7",
+    "sunglasses>=0.2",
 ]
 authors = [
     { name = "Norman Moore", email = "normandmickey@gmail.com" },
