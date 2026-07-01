@@ -599,6 +599,18 @@ Additional: honeypot anti-spam, 100KB size limit, blocked for suspended/archived
 
 **Response codes:** `201` success, `403` invalid key or blocked origin, `404` project not found, `429` rate limited.
 
+**Environment tagging:**
+- Submissions from preview domains (`*.preview.saasclaw.ai`) are tagged `environment=preview`
+- Submissions from production domains are tagged `environment=production`
+- The nginx proxy passes `X-Forwarded-Host` so Django auto-detects the environment
+- Filter with `GET /api/forms/{slug}/list/?environment=preview|production`
+- Database console UI shows All/Preview/Production filter buttons
+
+**Preview domain proxy:**
+- Static site nginx configs include `location /api/forms/` that proxies to Django
+- This lets static sites POST to `/api/forms/` same-origin (no CORS issues)
+- The proxy sets `Host: saasclaw.ai` (for Django's `ALLOWED_HOSTS`) and `X-Forwarded-Host` (for env detection)
+
 **Management:**
 - `GET /api/forms/{slug}/list/` — list submissions (project owner/staff only)
 - `DELETE /api/forms/{slug}/list/` — bulk delete all submissions
