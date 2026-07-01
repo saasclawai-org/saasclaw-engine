@@ -1,6 +1,6 @@
 # SaaSClaw Engine
 
-The open-source AI-powered application build, deploy, and agent engine.
+The open-source AI-powered application build, deploy, and agent engine for [SaaSClaw](https://saasclaw.ai).
 
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
