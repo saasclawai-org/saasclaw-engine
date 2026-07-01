@@ -13,20 +13,16 @@ ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def main():
     # Install the engine package (editable mode so imports work)
+    # This pulls django, psycopg, httpx, redis, sunglasses from dependencies
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install", "-e", ".", "--break-system-packages"],
         cwd=ENGINE_DIR,
     )
 
-    # Install test dependencies
+    # Install test-only dependencies
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install", "pytest", "pytest-django", "pytest-timeout",
-         "django", "psycopg[binary]", "--break-system-packages"],
-    )
-
-    # Install sunglasses for prompt guard tests
-    subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "sunglasses", "--break-system-packages"],
+         "--break-system-packages"],
     )
 
     # Run pytest
