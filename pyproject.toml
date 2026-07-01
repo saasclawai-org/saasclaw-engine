@@ -9,6 +9,14 @@ description = "AI-powered app build, deploy, and agent engine for SaaSClaw"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.11"
+dependencies = [
+    "django>=4.2",
+    "psycopg[binary]>=3.1",
+    "redis>=5.0",
+    "httpx>=0.25",
+    "presidio-analyzer>=2.2",
+    "spacy>=3.7",
+]
 authors = [
     { name = "Norman Moore", email = "normandmickey@gmail.com" },
 ]

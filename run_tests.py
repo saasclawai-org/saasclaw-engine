@@ -21,7 +21,7 @@ def main():
     # Install test dependencies
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install", "pytest", "pytest-django", "pytest-timeout",
-         "pytest-timeout", "--break-system-packages"],
+         "django", "psycopg[binary]", "--break-system-packages"],
     )
 
     # Install sunglasses for prompt guard tests
