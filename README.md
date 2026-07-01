@@ -370,16 +370,17 @@ sudo crontab -e
 
 ## GitHub App Integration
 
-The engine can clone, commit, and push to users' GitHub repos via a [GitHub App](https://docs.github.com/en/developers/apps). Users install the app on their account/org, and the engine creates installation-scoped access tokens.
+The engine connects to **users' own GitHub repos** via a [GitHub App](https://docs.github.com/en/developers/apps). Each user installs the app on their own account or org, and the engine gets scoped access to only their repos.
 
 ### How It Works
 
-1. You create a GitHub App (once)
-2. Users install it on their account or org
-3. GitHub fires an `installation` webhook to your server
-4. The engine records the installation
-5. When the agent needs to work on a connected repo, it creates an installation access token (signed with your app's private key)
-6. The agent clones, commits, and pushes using that token
+1. **Instance owner** creates a GitHub App (one-time setup)
+2. **End users** install the app on their own GitHub accounts or orgs
+3. GitHub fires an `installation` webhook → the engine links the installation to that user and records the repo list
+4. When a user creates a project, they pick from **their own installations** — other users' repos are never visible
+5. The agent clones, commits, and pushes using installation-scoped tokens (no cross-user access)
+
+> **Users bring their own repos.** The instance owner never has access to user repos. Each user only sees their own installations and repos.
 
 ### Step 1: Create the GitHub App
 
@@ -392,7 +393,7 @@ The engine can clone, commit, and push to users' GitHub repos via a [GitHub App]
 3. Under **Repository permissions**:
    - **Contents**: Read and write
    - **Metadata**: Read-only
-4. Under **Subscribe to events**: check `installation`
+4. Under **Subscribe to events**: check `installation` and `installation_repositories`
 5. Click **Create GitHub App**
 6. On the app's settings page, click **Generate a new private key** and download the `.pem` file
 
@@ -431,12 +432,14 @@ Before users can install your app, GitHub needs to successfully deliver a `ping`
 
 ### How Users Connect Their Repos
 
-1. User visits your app's GitHub setup page (e.g. `https://example.com/github/setup/`)
-2. GitHub App installation flow opens (you redirect to GitHub's installation URL)
-3. User chooses which repos to grant access to
-4. GitHub redirects back to your app and fires an `installation` webhook
-5. The engine records the installation (app ID, account, repo list)
-6. When the user creates a project connected to a GitHub repo, the engine uses the installation token to clone and push
+1. User visits your app's GitHub setup page (`/github/setup/`)
+2. GitHub App installation flow opens
+3. User chooses which account/org to install on and which repos to grant access to
+4. GitHub fires an `installation` webhook → the engine links the installation to the user (matched by GitHub social auth or username) and syncs the repo list
+5. The setup page shows only the user's own installations and repos
+6. When the user creates a project, they select one of their installations — the engine uses their installation token to clone and push
+
+**Important:** Installations are scoped per-user. A user can never see or use another user's GitHub installation. The webhook handler matches the `sender` (the GitHub user who installed) to a SaaSClaw account automatically.
 
 ---
 
@@ -518,7 +521,7 @@ commit_and_push_repo(project, message="Add new feature", token=token)
 |---------|-------------|
 | `saasclaw_engine.agent` | Pi Bridge (RPC agent), fallback runner, and agent tools (file I/O, bash, git, web, todos) |
 | `saasclaw_engine.deployments` | Models (Project, Environment, Deployment, Domain, EnvVar), deploy pipeline with secret/dependency scanning, nginx config generation, project decommissioning |
-| `saasclaw_engine.integrations` | GitHub App auth, repo clone/push, webhook handling |
+| `saasclaw_engine.integrations` | GitHub App auth, per-user installation scoping, repo tracking, webhook handling |
 | `saasclaw_engine.agents` | Celery task models and async task execution |
 | `saasclaw_engine.projects` | Project model with framework, runtime, risk tier, and config fields; ProjectSubmission with AI disclosure tracking |
 | `saasclaw_engine.studio_models` | AgentSession, ProviderKey, Workspace, Todo, TokenUsage models |
