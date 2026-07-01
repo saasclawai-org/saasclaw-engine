@@ -167,11 +167,14 @@ def detect_pii(text: str) -> list[dict]:
         try:
             resp = client.post("/analyze", json={"text": text})
             if resp.status_code == 200:
-                return resp.json()
+                findings = resp.json()
+                if findings:
+                    return findings
+                # Service healthy but returned nothing — also try regex
         except Exception as e:
             logger.warning("PII Guard service call failed, using regex: %s", e)
 
-    # Regex fallback
+    # Regex fallback (also supplements empty service results)
     findings = []
     for regex, placeholder, label in get_active_patterns():
         for m in regex.finditer(text):
@@ -207,7 +210,7 @@ def sanitize_for_llm(text: str, enabled: bool = True) -> tuple[str, list[dict]]:
                 if log:
                     summary = ', '.join(f"{l['label']}({l['placeholder']})" for l in log)
                     logger.info("PII redacted (service): %s", summary)
-                return data["text"], log
+                    return data["text"], log
         except Exception as e:
             logger.warning("PII Guard service sanitize failed, using regex: %s", e)
 
@@ -268,7 +271,7 @@ def sanitize_messages(messages: list[dict], enabled: bool = True) -> tuple[list[
                 if redactions:
                     summary = ', '.join(f"{l['label']}({l['placeholder']})" for l in redactions)
                     logger.info("PII redacted (service, batch): %s", summary)
-                return data["messages"], redactions
+                    return data["messages"], redactions
         except Exception as e:
             logger.warning("PII Guard service batch sanitize failed, using per-message regex: %s", e)
 
