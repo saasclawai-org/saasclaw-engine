@@ -271,13 +271,15 @@ ALLOWED_HOSTS=saasclaw.ai,app.saasclaw.ai
 
 ### Pi Extension (PII Guard)
 
-If using the PII Guard extension for Pi-based agents:
+The PII Guard Pi extension (`extensions/pii-guard.ts`) calls the same PII Guard service over HTTP, with regex fallback:
 
 ```bash
 sudo mkdir -p ~saasclaw/.pi/agent/extensions
 sudo cp /srv/saasclaw/engine/extensions/pii-guard.ts ~saasclaw/.pi/agent/extensions/
 sudo chown -R saasclaw:saasclaw ~saasclaw/.pi
 ```
+
+The service must be running (`sudo systemctl start pii-guard`). If it's not, the extension falls back to built-in regex automatically.
 
 ---
 
@@ -657,18 +659,15 @@ The engine includes built-in PII detection and sanitization to prevent sensitive
 
 ### How It Works
 
-Every message sent to an LLM — user prompts, file contents from tool results, agent context — passes through the **PII Guard** (`saasclaw_engine.agent.pii_guard`) before reaching the provider.
+Every message sent to an LLM passes through **PII Guard**, a Presidio-based microservice running on `localhost:8900`. It uses spaCy NLP for context-aware detection plus 14 custom regex recognizers. Consumers call it over HTTP with automatic regex fallback if the service is down.
 
-**Detection patterns:** SSNs, credit card numbers, phone numbers, email addresses, mailing addresses, bank routing/account numbers, dates of birth, passport numbers, driver's licenses, salary/compensation figures, database connection strings with embedded passwords, AWS access keys, and IP addresses.
+**Detection patterns:** SSNs, credit card numbers, phone numbers, email addresses, mailing addresses, bank routing/account numbers, dates of birth, passport numbers, driver's licenses, salary/compensation, database connection strings, AWS access keys, and IP addresses.
 
-**Redaction:** Detected values are replaced with synthetic placeholders (`{{SSN}}`, `{{SALARY}}`, `{{EMAIL}}`, etc.) before the message reaches the LLM. The agent can still reason about structure and build correct code — it just never sees real data.
+**Redaction:** Detected values are replaced with synthetic placeholders (`{{SSN}}`, `{{SALARY}}`, `{{EMAIL}}`, etc.) before the message reaches the LLM.
 
-**Logging:** Every redaction is logged at `WARNING` level with the count and pattern types:
-```
-WARNING PII redacted 3 pattern(s) before LLM call in round 2
-WARNING PII redacted 5 pattern(s) from PiBridge message
-```
-This gives you an audit trail without logging the actual sensitive values.
+**Fallback:** If the service is unreachable, consumers use identical built-in regex patterns — zero downtime.
+
+See [docs/PII-PROTECTION.md](docs/PII-PROTECTION.md) for the full guide.
 
 ### LLM Gateway Mode
 
@@ -694,8 +693,9 @@ The engine applies multiple layers of protection:
 
 | Layer | What it does | Always active? |
 |-------|-------------|---------------|
-| **PII Guard** | Detects and redacts sensitive patterns in LLM messages | Yes, every LLM call |
-| **Prompt Injection Guard** | Scans user input for injection patterns before LLM calls (sunglasses library) | Yes, every message |
+| **PII Guard** | Presidio + spaCy microservice detects and redacts sensitive patterns | Yes, every LLM call |
+| **Regex fallback** | Built-in regex if PII Guard service is down | Automatic |
+| **Prompt Injection Guard** | Scans user input for injection patterns (sunglasses library) | Yes, every message |
 | **LLM Gateway** | Routes requests to local LLM, blocks cloud providers | Per-project toggle |
 | **Audit logging** | Logs redaction counts, injection blocks, and pattern types | Yes |
 
@@ -724,27 +724,14 @@ A dual-layer defense scans every message:
 
 **Graceful degradation:** If sunglasses is not installed, all input is allowed (with a log warning).
 
-PII Guard runs regardless of gateway mode — even when using cloud providers, sensitive patterns are redacted. Gateway mode adds the infrastructure-level guarantee that data never leaves your network.
-
 ### What's Not Covered
 
-- **Pi subprocess internal calls**: Pi (the external agent process) reads files and sends them to its own LLM internally. The PiBridge sanitizes messages *before* they reach Pi, but Pi's internal tool calls are not covered by PII Guard. Use gateway mode to ensure Pi's LLM calls also stay local.
-- **Deployed application data**: PII Guard protects the *build process*. Data in the apps users build (user databases, runtime PII) is the application's own responsibility.
-- **Images/screenshots**: PII Guard is text-only. Image-based PII (screenshots with SSNs, photos of documents) is not detected.
+- **Images/screenshots**: PII Guard is text-only. Image-based PII is not detected.
+- **Deployed application data**: PII Guard protects the *build process*. Data in the apps users build is the application's own responsibility.
 
 ### Extending PII Guard
 
-To add custom patterns, edit `saasclaw_engine/agent/pii_guard.py` and add to the `PATTERNS` list:
-
-```python
-PATTERNS.append((
-    re.compile(r'your-custom-pattern-here'),
-    '{{CUSTOM}}',
-    'Custom Label'
-))
-```
-
-See [docs/PII-PROTECTION.md](docs/PII-PROTECTION.md) for the full guide.
+Custom PII patterns can be added via the Studio Settings UI (stored in database, loaded by the service on startup). See [docs/PII-PROTECTION.md](docs/PII-PROTECTION.md) for the full guide.
 
 ## Testing
 
