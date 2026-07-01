@@ -400,8 +400,14 @@ def _ensure_postgres_database(db_name: str, db_user: str, db_password: str, log_
                     with log_file.open('a') as h:
                         h.write(f'[created role: {db_user}]\n')
                 else:
+                    cur.execute(
+                        _sql.SQL('ALTER ROLE {} WITH PASSWORD {}').format(
+                            _sql.Identifier(db_user),
+                            _sql.Literal(db_password),
+                        )
+                    )
                     with log_file.open('a') as h:
-                        h.write(f'[role exists: {db_user}]\n')
+                        h.write(f'[role exists, password updated: {db_user}]\n')
                 cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db_name,))
                 if not cur.fetchone():
                     cur.execute(
