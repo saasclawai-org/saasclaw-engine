@@ -17,6 +17,7 @@ import logging
 import secrets
 from datetime import datetime, timedelta
 
+from django.conf import settings
 from django.core.cache import cache
 from django.http import (
     JsonResponse,
@@ -70,7 +71,6 @@ def _validate_origin(request, project):
         allowed.add(f"https://{project.production_domain}")
 
     # Also allow the SaaSClaw app itself (studio UI)
-    from django.conf import settings
     host = getattr(settings, 'ALLOWED_HOSTS', [''])
     for h in host:
         if h and h != '*':
@@ -183,9 +183,19 @@ def submit_form(request, slug):
     if len(str(form_data)) > 100_000:
         return HttpResponseBadRequest('Submission too large.')
 
+    # --- Detect environment from forwarded host ---
+    forwarded_host = request.META.get('HTTP_X_FORWARDED_HOST', '')
+    preview_domain = getattr(settings, 'PREVIEW_BASE_DOMAIN', 'preview.saasclaw.ai')
+    environment = (
+        FormSubmission.Environment.PREVIEW
+        if preview_domain in forwarded_host
+        else FormSubmission.Environment.PRODUCTION
+    )
+
     submission = FormSubmission.objects.create(
         project=project,
         form_data=form_data,
+        environment=environment,
         ip_address=client_ip,
         user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],
         referrer=request.META.get('HTTP_REFERER', '')[:2048],
@@ -216,6 +226,9 @@ def form_submissions(request, slug):
 
     # GET — list submissions with pagination
     submissions = FormSubmission.objects.filter(project=project)
+    env_filter = request.GET.get('environment', '')
+    if env_filter:
+        submissions = submissions.filter(environment=env_filter)
     total = submissions.count()
     limit = min(int(request.GET.get('limit', 50)), 500)
     offset = int(request.GET.get('offset', 0))
@@ -229,6 +242,7 @@ def form_submissions(request, slug):
         'items': [
             {
                 'id': s.id,
+                'environment': s.environment,
                 'form_data': s.form_data,
                 'submitted_at': s.submitted_at.isoformat(),
                 'ip_address': s.ip_address,
@@ -263,6 +277,7 @@ def form_submission_detail(request, slug, pk):
     return JsonResponse({
         'ok': True,
         'id': submission.id,
+        'environment': submission.environment,
         'form_data': submission.form_data,
         'submitted_at': submission.submitted_at.isoformat(),
         'ip_address': submission.ip_address,

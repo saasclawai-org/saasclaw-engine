@@ -214,8 +214,18 @@ class ProjectSubmission(models.Model):
 class FormSubmission(models.Model):
     """Form submissions from static sites via POST /api/forms/{slug}."""
 
+    class Environment(models.TextChoices):
+        PREVIEW = 'preview', 'Preview'
+        PRODUCTION = 'production', 'Production'
+
     project = models.ForeignKey(
         'Project', on_delete=models.CASCADE, related_name='form_submissions'
+    )
+    environment = models.CharField(
+        max_length=20,
+        choices=Environment.choices,
+        default=Environment.PREVIEW,
+        db_index=True,
     )
     form_data = models.JSONField(
         help_text='Submitted form fields as JSON'
