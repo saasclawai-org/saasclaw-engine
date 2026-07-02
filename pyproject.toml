@@ -19,18 +19,7 @@ dependencies = [
     "sunglasses>=0.2",
 ]
 
-[project.optional-dependencies]
-pii-guard = ["presidio-analyzer>=2.2", "presidio-anonymizer>=2.2", "spacy>=3.7", "fastapi>=0.100", "uvicorn>=0.23"]
-vector-store = ["chromadb>=0.4"]
-task-queue = ["celery[redis]>=5.3"]
-dev = [
-    "pytest",
-    "pytest-django",
-    "pytest-timeout",
-]
-authors = [
-    { name = "Norman Moore", email = "normandmickey@gmail.com" },
-]
+authors = ["Norman Moore <normandmickey@gmail.com>"]
 keywords = ["ai", "agent", "deploy", "saasclaw"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -41,6 +30,15 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 
+[project.optional-dependencies]
+pii-guard = ["presidio-analyzer>=2.2", "presidio-anonymizer>=2.2", "spacy>=3.7", "fastapi>=0.100", "uvicorn>=0.23"]
+vector-store = ["chromadb>=0.4"]
+task-queue = ["celery[redis]>=5.3"]
+dev = [
+    "pytest",
+    "pytest-django",
+    "pytest-timeout",
+]
 
 [project.urls]
 Homepage = "https://saasclaw.ai"
