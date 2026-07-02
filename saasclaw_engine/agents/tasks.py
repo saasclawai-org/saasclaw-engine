@@ -15,6 +15,8 @@ def run_preview_deploy_job(self, project_id: int, user_id: int | None = None) ->
     user = User.objects.get(id=user_id) if user_id else None
     try:
         deployment = deploy_preview(project, triggered_by=user)
+        # Queue async screenshot after successful deploy
+        take_screenshot.delay(project.slug)
         return deployment.id
     except Exception as exc:
         logger.error("Deploy task failed:\n%s", traceback.format_exc())
@@ -131,3 +133,56 @@ def cleanup_stale_sessions():
         updated_at__lt=cutoff,
     ).update(status='ended', updated_at=timezone.now())
     return ended
+
+
+@shared_task(queue='deploy', acks_late=True, max_retries=1)
+def take_screenshot(slug: str) -> bool:
+    """Take a screenshot of the preview URL and save to the project directory.
+
+    Runs asynchronously after deploy so it doesn't block anything.
+    Uses Chromium headless on the server.
+    """
+    import logging, subprocess, traceback
+    logger = logging.getLogger(__name__)
+    from pathlib import Path
+    from saasclaw_engine.projects.models import Project
+
+    try:
+        project = Project.objects.get(slug=slug)
+        preview_env = project.environments.filter(name='preview').first()
+        if not preview_env or not preview_env.domain:
+            logger.info('No preview domain for %s, skipping screenshot', slug)
+            return False
+
+        url = f'https://{preview_env.domain}'
+        project_dir = Path(project.workspace_root) if project.workspace_root else None
+        if not project_dir or not project_dir.exists():
+            project_dir = Path('/srv/saasclaw/projects') / slug
+        screenshot_path = project_dir / 'screenshot.png'
+
+        # Wait a moment for the app to be fully ready
+        import time
+        time.sleep(5)
+
+        result = subprocess.run(
+            ['chromium-browser',
+             '--headless=new',
+             '--no-sandbox',
+             '--disable-gpu',
+             '--disable-dev-shm-usage',
+             '--screenshot=' + str(screenshot_path),
+             '--window-size=1280,720',
+             url],
+            capture_output=True, text=True, timeout=30,
+            env={'HOME': '/tmp', 'DISPLAY': ''},
+        )
+
+        if screenshot_path.exists() and screenshot_path.stat().st_size > 1000:
+            logger.info('Screenshot saved for %s (%d bytes)', slug, screenshot_path.stat().st_size)
+            return True
+        else:
+            logger.warning('Screenshot for %s was too small or missing', slug)
+            return False
+    except Exception:
+        logger.warning('Screenshot failed for %s:\n%s', slug, traceback.format_exc())
+        return False
