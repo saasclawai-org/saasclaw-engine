@@ -140,9 +140,9 @@ def take_screenshot(slug: str) -> bool:
     """Take a screenshot of the preview URL and save to the project directory.
 
     Runs asynchronously after deploy so it doesn't block anything.
-    Uses Chromium headless on the server.
+    Uses Playwright Chromium headless.
     """
-    import logging, subprocess, traceback
+    import logging, traceback
     logger = logging.getLogger(__name__)
     from pathlib import Path
     from saasclaw_engine.projects.models import Project
@@ -158,24 +158,19 @@ def take_screenshot(slug: str) -> bool:
         project_dir = Path(project.workspace_root) if project.workspace_root else None
         if not project_dir or not project_dir.exists():
             project_dir = Path('/srv/saasclaw/projects') / slug
+        project_dir.mkdir(parents=True, exist_ok=True)
         screenshot_path = project_dir / 'screenshot.png'
 
-        # Wait a moment for the app to be fully ready
+        from playwright.sync_api import sync_playwright
         import time
-        time.sleep(5)
+        time.sleep(3)  # let the app settle
 
-        result = subprocess.run(
-            ['chromium-browser',
-             '--headless=new',
-             '--no-sandbox',
-             '--disable-gpu',
-             '--disable-dev-shm-usage',
-             '--screenshot=' + str(screenshot_path),
-             '--window-size=1280,720',
-             url],
-            capture_output=True, text=True, timeout=30,
-            env={'HOME': '/tmp', 'DISPLAY': ''},
-        )
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={'width': 1280, 'height': 720})
+            page.goto(url, wait_until='networkidle', timeout=15000)
+            page.screenshot(path=str(screenshot_path), full_page=False)
+            browser.close()
 
         if screenshot_path.exists() and screenshot_path.stat().st_size > 1000:
             logger.info('Screenshot saved for %s (%d bytes)', slug, screenshot_path.stat().st_size)
