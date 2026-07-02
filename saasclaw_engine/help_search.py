@@ -3,10 +3,18 @@
 import os
 import re
 
-import chromadb
 from django.conf import settings
 
 # Persistent storage so we don't re-embed on every gunicorn worker restart
+_chromadb = None
+
+def _get_chromadb():
+    global _chromadb
+    if _chromadb is None:
+        import chromadb
+        _chromadb = chromadb
+    return _chromadb
+
 def _get_db_dir():
     # saasclaw user can't write to app dir; use /srv/saasclaw
     db_dir = "/srv/saasclaw/.chroma_help"
@@ -61,7 +69,7 @@ def _load_docs():
 
 def _init_collection():
     """Get or create the ChromaDB collection, indexing docs if needed."""
-    client = chromadb.PersistentClient(path=_get_db_dir())
+    client = _get_chromadb().PersistentClient(path=_get_db_dir())
     collection = client.get_or_create_collection(
         name="help_docs",
         metadata={"hnsw:space": "cosine"},
