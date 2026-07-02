@@ -248,6 +248,12 @@ class SiteSettings(models.Model):
         default=True,
         help_text='Require AI disclosure checkbox on project intake form.'
     )
+
+    # Wizard backend
+    openclaw_wizard_enabled = models.BooleanField(
+        default=False,
+        help_text='Route all wizard sessions through the OpenClaw gateway agent instead of the custom LLM runner.'
+    )
     pii_guard_enabled = models.BooleanField(
         default=True,
         help_text='Redact PII (SSNs, credit cards, etc.) before sending to LLM providers.'
