@@ -143,6 +143,7 @@ class AgentSession(models.Model):
     )
     stage = models.CharField(max_length=10, choices=STAGE_CHOICES, default="chat")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="idle")
+    openclaw_session_key = models.CharField(max_length=255, blank=True, default='', help_text='OpenClaw gateway session key for persistent subagent sessions')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
