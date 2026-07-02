@@ -3,7 +3,7 @@ from celery import shared_task
 from saasclaw_engine.deployments.service import deploy_preview, deploy_production
 
 
-@shared_task(bind=True)
+@shared_task(bind=True, queue="deploy")
 def run_preview_deploy_job(self, project_id: int, user_id: int | None = None) -> int:
     import logging, traceback
     logger = logging.getLogger(__name__)

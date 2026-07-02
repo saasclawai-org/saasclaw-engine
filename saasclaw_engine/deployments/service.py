@@ -55,7 +55,7 @@ def _normalize_ownership(path: Path, log_file: Path = None) -> None:
         saasclaw_uid = _pwd.getpwnam('saasclaw').pw_uid
         saasclaw_gid = _pwd.getpwnam('saasclaw').pw_gid
         subprocess.run(
-            f'chown -R {saasclaw_uid}:{saasclaw_gid} {path}',
+            f'sudo chown -R {saasclaw_uid}:{saasclaw_gid} {path}',
             shell=True, capture_output=True, text=True, timeout=120
         )
         if log_file:
@@ -821,16 +821,29 @@ def _ensure_systemd_service(service_name, cwd, env_file, exec_start,
 
 
 
+def _write_tmp_script(path: str, content: str) -> None:
+    """Write a temporary shell script with proper permissions."""
+    import tempfile, os
+    fd, tmp = tempfile.mkstemp(suffix='.sh')
+    try:
+        os.chmod(tmp, 0o755)
+        with os.fdopen(fd, 'w') as f:
+            f.write(content)
+        subprocess.run(['sudo', 'cp', tmp, path], capture_output=True, timeout=5)
+    finally:
+        os.unlink(tmp)
+
+
 def _write_and_validate_nginx(site_name, nginx_content, log_file=None):
     """Write nginx config, validate with nginx -t, and reload.
-    If validation fails, roll back the config so we never leave nginx broken.
+    If validation fails, roll back only this config so we never leave nginx broken.
     Returns True on success, False on failure.
     """
     import logging
     _logger = logging.getLogger(__name__)
     site_file = Path('/etc/nginx/sites-available/' + site_name)
     site_enabled = Path('/etc/nginx/sites-enabled/' + site_name)
-    
+
     # Write config
     result = subprocess.run(
         ['sudo', 'tee', str(site_file)],
@@ -843,30 +856,31 @@ def _write_and_validate_nginx(site_name, nginx_content, log_file=None):
             with log_file.open('a', encoding='utf-8') as h:
                 h.write(f"NGINX ERROR: {msg}\n")
         return False
-    
+
+    # Enable site
     result = subprocess.run(
         ['sudo', 'ln', '-sfn', str(site_file), str(site_enabled)],
         capture_output=True, timeout=10,
     )
-    
-    # Validate before reload
+
+    # Validate — nginx -t checks ALL configs, not just ours.
+    # Warnings on stderr are not errors; only check the return code.
     result = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, timeout=10)
     if result.returncode != 0:
-        error = result.stderr.decode()[:500]
+        error = (result.stderr.decode() + result.stdout.decode())[:500]
         msg = f"nginx config validation FAILED for {site_name}: {error}"
         _logger.error(msg)
         if log_file:
             with log_file.open('a', encoding='utf-8') as h:
                 h.write(f"NGINX ERROR: {msg}\n")
-        # Roll back: remove the broken config
+        # Roll back only this config
         subprocess.run(['sudo', 'rm', '-f', str(site_enabled)], capture_output=True, timeout=5)
         subprocess.run(['sudo', 'rm', '-f', str(site_file)], capture_output=True, timeout=5)
-        # Try to reload the remaining good configs
         subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, timeout=10)
         subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], capture_output=True, timeout=10)
         return False
-    
-    # Good — reload
+
+    # Reload nginx
     result = subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], capture_output=True, timeout=10)
     if result.returncode != 0:
         msg = f"nginx reload failed after writing {site_name}: {result.stderr.decode()[:200]}"
@@ -875,7 +889,7 @@ def _write_and_validate_nginx(site_name, nginx_content, log_file=None):
             with log_file.open('a', encoding='utf-8') as h:
                 h.write(f"NGINX ERROR: {msg}\n")
         return False
-    
+
     return True
 
 def _ensure_nginx_proxy(service_name, domain, port, log_file=None, upgrade=False):

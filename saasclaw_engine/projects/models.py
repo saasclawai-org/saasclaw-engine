@@ -69,6 +69,7 @@ class Project(models.Model):
     form_api_key = models.CharField(max_length=64, blank=True, editable=False, help_text='API key for public form submissions')
     risk_tier = models.CharField(max_length=10, choices=RiskTier.choices, default=RiskTier.LOW)
     last_deployed_at = models.DateTimeField(null=True, blank=True)
+    show_as_demo = models.BooleanField(default=False, help_text='Show on the public demos page')
     deleted_at = models.DateTimeField(null=True, blank=True, db_index=True, help_text='Soft delete timestamp — null means active')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
