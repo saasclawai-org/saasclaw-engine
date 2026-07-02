@@ -211,6 +211,19 @@ class SiteSettings(models.Model):
         help_text='When enabled, users must submit a project request that staff approves before creating projects.'
     )
 
+
+    # Framework availability
+    enabled_frameworks = models.JSONField(
+        default=list, blank=True, null=True,
+        help_text='JSON list of enabled framework names. Empty/null = all enabled.'
+    )
+
+    # Custom domains
+    custom_domains_enabled = models.BooleanField(
+        default=True,
+        help_text='When enabled, users can configure custom domains for their projects.'
+    )
+
     # Deploy security scanning
     secret_scan_enabled = models.BooleanField(
         default=True,
