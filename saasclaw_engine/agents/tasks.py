@@ -115,6 +115,7 @@ def run_production_deploy_job(self, project_id: int, user_id: int | None = None)
     project = Project.objects.get(id=project_id)
     user = User.objects.get(id=user_id) if user_id else None
     deployment = deploy_production(project, triggered_by=user)
+    take_screenshot.delay(project.slug)
     return deployment.id
 
 
@@ -149,12 +150,16 @@ def take_screenshot(slug: str) -> bool:
 
     try:
         project = Project.objects.get(slug=slug)
-        preview_env = project.environments.filter(name='preview').first()
-        if not preview_env or not preview_env.domain:
-            logger.info('No preview domain for %s, skipping screenshot', slug)
+        # Try preview first, fall back to production
+        url = None
+        for env_name in ('preview', 'production'):
+            env = project.environments.filter(name=env_name).first()
+            if env and env.domain:
+                url = f'https://{env.domain}'
+                break
+        if not url:
+            logger.info('No domain for %s, skipping screenshot', slug)
             return False
-
-        url = f'https://{preview_env.domain}'
         project_dir = Path(project.workspace_root) if project.workspace_root else None
         if not project_dir or not project_dir.exists():
             project_dir = Path('/srv/saasclaw/projects') / slug
