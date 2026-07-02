@@ -19,7 +19,7 @@ dependencies = [
     "sunglasses>=0.2",
 ]
 
-authors = ["Norman Moore <normandmickey@gmail.com>"]
+authors = [{name = "Norman Moore", email = "normandmickey@gmail.com"}]
 keywords = ["ai", "agent", "deploy", "saasclaw"]
 classifiers = [
     "Development Status :: 3 - Alpha",
