@@ -254,6 +254,7 @@ def form_submissions(request, slug):
     })
 
 
+@csrf_exempt
 @require_http_methods(["GET", "DELETE"])
 def form_submission_detail(request, slug, pk):
     """View or delete a single submission. Project owner/staff only."""
