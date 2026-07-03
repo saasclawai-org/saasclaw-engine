@@ -254,6 +254,10 @@ class SiteSettings(models.Model):
         default=False,
         help_text='Route all wizard sessions through the OpenClaw gateway agent instead of the custom LLM runner.'
     )
+    wizard_web_search_enabled = models.BooleanField(
+        default=False,
+        help_text='Allow the wizard agent to search the web. When enabled, the wizard can look up docs and solutions online.'
+    )
     pii_guard_enabled = models.BooleanField(
         default=True,
         help_text='Redact PII (SSNs, credit cards, etc.) before sending to LLM providers.'
@@ -283,6 +287,33 @@ class SiteSettings(models.Model):
     def save(self, *args, **kwargs):
         self.pk = 1  # Enforce singleton
         super().save(*args, **kwargs)
+        # Sync wizard gateway web search config
+        self._sync_wizard_web_search()
+
+    def _sync_wizard_web_search(self):
+        """Update the OpenClaw wizard gateway config to match this setting."""
+        import json, os, subprocess
+        config_path = os.path.expanduser('~/.openclaw/openclaw-wizard.json')
+        if not os.path.isfile(config_path):
+            return
+        try:
+            with open(config_path) as f:
+                cfg = json.load(f)
+            # Toggle web search in tools.web.search.enabled
+            if 'tools' not in cfg:
+                cfg['tools'] = {}
+            if 'web' not in cfg['tools']:
+                cfg['tools']['web'] = {}
+            if 'search' not in cfg['tools']['web']:
+                cfg['tools']['web']['search'] = {}
+            cfg['tools']['web']['search']['enabled'] = self.wizard_web_search_enabled
+            with open(config_path, 'w') as f:
+                json.dump(cfg, f, indent=2)
+            # Restart wizard gateway to pick up changes
+            subprocess.run(['sudo', 'systemctl', 'restart', 'openclaw-wizard'],
+                           capture_output=True, timeout=10)
+        except Exception:
+            pass  # Non-critical — admin can restart manually
 
 
 class CustomPiiPattern(models.Model):

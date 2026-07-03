@@ -1615,11 +1615,19 @@ def run_agent(
         display_content += f"\n[{len(images)} image(s) attached]"
 
     new_messages = [{"role": "user", "content": display_content, "tool_call": {}}]
-    # Filter tools based on profile
+    # Filter tools based on profile and platform settings
     if profile_tools:
         tools = [t for t in agent_tools.TOOL_DEFINITIONS if t['function']['name'] in profile_tools]
     else:
         tools = agent_tools.TOOL_DEFINITIONS
+
+    # Strip web_search unless platform setting allows it
+    try:
+        from saasclaw_engine.studio_models.models import SiteSettings
+        if not SiteSettings.get().wizard_web_search_enabled:
+            tools = [t for t in tools if t['function']['name'] != 'web_search']
+    except Exception:
+        pass
 
     # Track tool output sizes for context management
     TOOL_OUTPUT_OVERHEAD = 1500  # chars; truncate old tool results to this

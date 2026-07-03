@@ -5,7 +5,21 @@ from .models import ProviderKey, SiteSettings, CustomPiiPattern, TrainingModule,
 
 @admin.register(SiteSettings)
 class SiteSettingsAdmin(admin.ModelAdmin):
-    list_display = ['pk', 'project_approval_required', 'secret_scan_enabled', 'default_require_gateway', 'updated_at']
+    list_display = ['pk', 'project_approval_required', 'openclaw_wizard_enabled', 'wizard_web_search_enabled', 'pii_guard_enabled', 'updated_at']
+    fieldsets = (
+        ('Project Management', {
+            'fields': ('project_approval_required', 'enabled_frameworks', 'custom_domains_enabled'),
+        }),
+        ('Security', {
+            'fields': ('secret_scan_enabled', 'dependency_scan_enabled', 'block_deploy_on_findings', 'pii_guard_enabled'),
+        }),
+        ('Wizard / AI', {
+            'fields': ('openclaw_wizard_enabled', 'wizard_web_search_enabled', 'default_require_gateway', 'ai_disclosure_required'),
+        }),
+        ('Training', {
+            'fields': ('require_training_before_project',),
+        }),
+    )
 
 
 @admin.register(CustomPiiPattern)
