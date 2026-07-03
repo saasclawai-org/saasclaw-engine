@@ -736,6 +736,8 @@ def _scan_codebase_context(workspace_path: str) -> str:
             hints.append("  GET /api/forms/{slug}/data/ — read all data (returns {ok: true, data: [...]}, flattened objects, API key auth)")
             hints.append("  DELETE /api/forms/{slug}/{id}/ — delete a submission")
             hints.append("- The API key is in the project\'s .env as FORM_API_KEY.")
+            hints.append("- For Vite/React/Vue: store as VITE_FORM_API_KEY in repo/.env. If .env is missing, CREATE IT.")
+            hints.append("- For SvelteKit: store as VITE_FORM_API_KEY or PUBLIC_FORM_API_KEY as appropriate.")
             hints.append("- Each project has its own FormSubmission table in PostgreSQL — no custom Django models needed.")
             hints.append("- Do NOT create custom Django models, Express servers, or backend code — use the Forms API.")
         hints.append("- src/app/api/<name>/route.ts → API routes, one concern per route, keep under 100 lines")
