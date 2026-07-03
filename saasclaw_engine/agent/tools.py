@@ -3,20 +3,47 @@
 Each tool takes a workspace path and arguments, returns a string result.
 Tools are designed to be safe: no root, no network, locked to workspace dir.
 """
+import json
+import logging
 import os
 import re
+import subprocess
 import threading
 import uuid
-
-from django.conf import settings
-import shlex
-import subprocess
-import urllib.request
 import urllib.parse
+import urllib.request
 from html.parser import HTMLParser
+
+import shlex
+from django.conf import settings
 
 # Max output size per tool call (truncated if exceeded)
 MAX_OUTPUT = 20000
+
+logger = logging.getLogger(__name__)
+
+# Docker sandbox configuration
+SANDBOX_IMAGE = "saasclaw-sandbox:latest"
+SANDBOX_ENABLED = True  # Set to False to disable Docker sandbox
+
+# URL allowlist for web_fetch — only well-known public docs/APIs
+WEB_FETCH_ALLOWED_HOSTS = {
+    "developer.mozilla.org",
+    "docs.python.org",
+    "docs.djangoproject.com",
+    "nextjs.org",
+    "react.dev",
+    "nodejs.org",
+    "docs.npmjs.com",
+    "tailwindcss.com",
+    "stackoverflow.com",
+    "github.com",
+    "raw.githubusercontent.com",
+    "api.github.com",
+    "fonts.googleapis.com",
+    "cdn.jsdelivr.net",
+    "unpkg.com",
+}
 
 # Track files read in the current agent turn to prevent re-read loops
 _read_cache: set = set()
@@ -426,6 +453,55 @@ def git_log(workspace_path: str, limit: int = 10) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Docker sandbox
+# ---------------------------------------------------------------------------
+
+def _run_in_sandbox(workspace_path: str, command: str, timeout: int = 120):
+    """Execute a command inside an isolated Docker container.
+
+    Returns output string on success, or None to signal fallback to host.
+    """
+    command = re.sub(r'\bpython\b(?!3)', 'python3', command)
+    real_workspace = os.path.realpath(workspace_path)
+    if not os.path.isdir(real_workspace):
+        return f"Error: workspace path '{workspace_path}' does not exist."
+
+    docker_cmd = [
+        "docker", "run", "--rm",
+        "--network", "none",
+        "--read-only",
+        "--tmpfs", "/tmp:rw,size=512m",
+        "--tmpfs", "/home/sandbox:rw,size=64m",
+        "--memory", "512m",
+        "--cpus", "1",
+        "--pids-limit", "100",
+        "--user", "1001:1001",
+        "--workdir", "/workspace",
+        "-v", f"{real_workspace}:/workspace:rw",
+        SANDBOX_IMAGE,
+        "bash", "-c", command,
+    ]
+
+    try:
+        result = subprocess.run(
+            docker_cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 15,
+        )
+        output = result.stdout + result.stderr
+        return _truncate(output.strip()) if output.strip() else "(no output)"
+    except FileNotFoundError:
+        logger.warning("Docker not found, falling back to host")
+        return None
+    except subprocess.TimeoutExpired:
+        return f"Error: command timed out after {timeout}s (sandbox)."
+    except Exception as exc:
+        logger.warning("Sandbox error, falling back: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Shell tool
 # ---------------------------------------------------------------------------
 
@@ -433,24 +509,28 @@ def run_command(workspace_path: str, command: str, timeout: int = 120) -> str:
     """Execute a shell command in the workspace.
 
     Blocked commands: rm -rf /, sudo, curl, wget, nc, ssh, scp.
-    Working directory is locked to workspace_path.
+    Runs inside Docker sandbox when available (network disabled, filesystem isolated).
+    Falls back to host execution if Docker is unavailable.
     """
     blocked = ["sudo", "rm -rf /", "curl ", "wget ", "nc ", "ssh ", "scp "]
     for b in blocked:
         if b in command:
             return f"Error: blocked command pattern '{b.strip()}'"
 
-    # Auto-fix: python → python3 (common on Linux where python is often unversioned)
-    command = re.sub(r'\bpython\b(?!3)', 'python3', command)
+    # Try Docker sandbox first
+    if SANDBOX_ENABLED:
+        result = _run_in_sandbox(workspace_path, command, timeout)
+        if result is not None:
+            return result
 
+    # Fallback: host execution
+    logger.warning("HOST exec (no sandbox): %s", command[:100])
+    command = re.sub(r'\bpython\b(?!3)', 'python3', command)
     try:
         result = subprocess.run(
-            command,
-            cwd=workspace_path,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            shell=True,
+            command, cwd=workspace_path,
+            capture_output=True, text=True,
+            timeout=timeout, shell=True,
         )
         output = result.stdout + result.stderr
         return _truncate(output.strip()) if output else "(no output)"
@@ -734,10 +814,32 @@ class _TextExtractor(HTMLParser):
             self.text.append(data.strip())
 
 
+def _is_url_allowed(url: str) -> bool:
+    """Check if a URL's host is in the allowlist."""
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).hostname or ""
+        # Allow if host matches allowlist or any parent domain
+        for allowed in WEB_FETCH_ALLOWED_HOSTS:
+            if host == allowed or host.endswith("." + allowed):
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def web_fetch(workspace_path: str, url: str, max_chars: int = 5000) -> str:
-    """Fetch a URL and extract readable text content."""
+    """Fetch a URL and extract readable text content.
+
+    Restricted to well-known documentation/API hosts to prevent data exfiltration.
+    """
     if not url.startswith(("http://", "https://")):
         return "Error: URL must start with http:// or https://"
+
+    if not _is_url_allowed(url):
+        allowed_list = ", ".join(sorted(WEB_FETCH_ALLOWED_HOSTS))
+        return (f"Error: URL host '{url}' is not in the allowed list. "
+                f"Allowed hosts: {allowed_list}")
 
     try:
         req = urllib.request.Request(
@@ -952,19 +1054,54 @@ def apply_patch_tool(workspace_path: str, operations: list) -> str:
 _bg_jobs: dict = {}  # job_id -> {"process": Popen, "output": str, "done": bool, "returncode": int}
 
 def background_command(workspace_path: str, command: str) -> str:
-    """Start a long-running command in the background, return a job ID."""
+    """Start a long-running command in the background, return a job ID.
+
+    Runs inside Docker sandbox when available.
+    """
+    blocked = ["sudo", "rm -rf /", "curl ", "wget ", "nc ", "ssh ", "scp "]
+    for b in blocked:
+        if b in command:
+            return f"Error: blocked command pattern '{b.strip()}'"
+
     job_id = uuid.uuid4().hex[:8]
-    proc = subprocess.Popen(
-        command, shell=True, cwd=workspace_path,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True
-    )
+    real_workspace = os.path.realpath(workspace_path)
+
+    if SANDBOX_ENABLED and os.path.isdir(real_workspace):
+        # Run in Docker sandbox
+        docker_cmd = [
+            "docker", "run", "--rm",
+            "--network", "none",
+            "--read-only",
+            "--tmpfs", "/tmp:rw,size=512m",
+            "--tmpfs", "/home/sandbox:rw,size=64m",
+            "--memory", "512m",
+            "--cpus", "1",
+            "--pids-limit", "100",
+            "--user", "1001:1001",
+            "--workdir", "/workspace",
+            "-v", f"{real_workspace}:/workspace:rw",
+            SANDBOX_IMAGE,
+            "bash", "-c", command,
+        ]
+        proc = subprocess.Popen(
+            docker_cmd, cwd=workspace_path,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True,
+        )
+    else:
+        logger.warning("HOST background exec (no sandbox): %s", command[:100])
+        proc = subprocess.Popen(
+            command, shell=True, cwd=workspace_path,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True,
+        )
+
     _bg_jobs[job_id] = {"process": proc, "output": "", "done": False, "returncode": None}
 
     def _monitor():
         try:
             out, _ = proc.communicate(timeout=3600)
-            _bg_jobs[job_id]["output"] = out or ""
+            _bg_jobs[job_id]["output"] = _truncate(out or "")
             _bg_jobs[job_id]["done"] = True
             _bg_jobs[job_id]["returncode"] = proc.returncode
         except subprocess.TimeoutExpired:

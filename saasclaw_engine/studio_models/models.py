@@ -15,7 +15,7 @@ PROVIDER_CHOICES = [
 ]
 
 PROVIDER_MODELS = {
-    'zai': ['glm-5.2', 'glm-5.1', 'glm-5-turbo', 'glm-4.7', 'glm-4.5-air'],
+    'zai': ['glm-5.2', 'glm-5.1', 'glm-5v-turbo', 'glm-5-turbo', 'glm-4.7', 'glm-4.5-air'],
     'openai': ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'o3', 'o4-mini'],
     'anthropic': ['claude-sonnet-4-20250514', 'claude-opus-4-20250515', 'claude-haiku-4-20250414'],
 }
