@@ -372,8 +372,12 @@ def _system_prompt(workspace_path: str, project_name: str, project_notes: str = 
             saasclaw_section += "\n## Platform Services\n"
             if platform.get("database"):
                 saasclaw_section += f"- Database: {platform['database']}\n"
-            if platform.get("api_proxy"):
-                saasclaw_section += f"- API proxy: {platform['api_proxy']} → {platform.get('api_target', 'Django')}\n"
+            if platform.get("forms_api"):
+                forms = platform["forms_api"]
+                for endpoint, desc in forms.items():
+                    saasclaw_section += f"- {endpoint}: {desc}\n"
+            if platform.get("auth"):
+                saasclaw_section += f"- Auth: {platform['auth']}\n"
             saasclaw_section += "\n"
 
     return f"""You are SaaSClaw Studio, an expert coding agent.
@@ -717,12 +721,14 @@ def _scan_codebase_context(workspace_path: str) -> str:
         hints.append("- src/types/ → shared TypeScript interfaces and types")
         hints.append("")
         hints.append("Platform data persistence (IMPORTANT):")
-        hints.append("- Static/SPA projects (node_static deploy) have access to a Django-backed API at /api/forms/.")
-        hints.append("- Each project automatically gets a PostgreSQL database. The DATABASE_URL is in the project's .env file.")
-        hints.append("- To add custom API endpoints for data persistence: create Django models in the SaaSClaw app and expose views at /api/<slug>/.")
-        hints.append("- The nginx config already proxies /api/ requests to Django — no need to change the deploy target from node_static to a Node server.")
-        hints.append("- React apps can fetch('/api/<slug>/data') to read/write data through Django + PostgreSQL.")
-        hints.append("- Do NOT propose Express/server-side backends — use the existing Django + PostgreSQL infrastructure.")
+        hints.append("- Static/SPA projects use the built-in Forms API for data persistence — no custom backend needed.")
+        hints.append("  POST /api/forms/{slug}/ — submit data (JSON or form-encoded, auth via X-Form-Key header)")
+        hints.append("  GET /api/forms/{slug}/list/ — list all submissions")
+        hints.append("  GET /api/forms/{slug}/{id}/ — single submission detail")
+        hints.append("  DELETE /api/forms/{slug}/{id}/ — delete a submission")
+        hints.append("- The API key is in the project's .env as FORM_API_KEY.")
+        hints.append("- Each project has its own FormSubmission table in PostgreSQL — no custom Django models needed.")
+        hints.append("- Do NOT create custom Django models, Express servers, or backend code — use the Forms API.")
         hints.append("- src/app/api/<name>/route.ts → API routes, one concern per route, keep under 100 lines")
         hints.append("- State management: useReducer for complex state (games, multi-step flows). Lift state to parent, pass via props.")
         hints.append("- NEVER inline all game/app logic in a single useState or useEffect in page.tsx.")
