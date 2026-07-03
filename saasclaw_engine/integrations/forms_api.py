@@ -331,7 +331,7 @@ def public_form_data(request, slug):
         "limit": limit,
         "offset": offset,
         "data": [
-            {"id": s.id, "form_data": s.form_data, "submitted_at": s.submitted_at.isoformat()}
+            {**(s.form_data or {}), "id": s.id, "submitted_at": s.submitted_at.isoformat()}
             for s in items
         ],
     })
