@@ -179,6 +179,46 @@ Deploy steps:
 5. Health check (wait for HTTP 200)
 6. Mark deployment as successful
 
+## Content Safety
+
+### PII Protection (Presidio)
+
+Every message sent to an LLM passes through **PII Guard**, a Presidio-based microservice on `localhost:8900`. It uses spaCy NLP for context-aware detection plus 14 custom regex recognizers.
+
+**Detected patterns:** SSNs, credit cards, phone numbers, emails, addresses, bank accounts, dates of birth, passport numbers, driver's licenses, salary data, database connection strings, AWS access keys, and IP addresses.
+
+**Redaction:** Detected values are replaced with synthetic placeholders (`{{SSN}}`, `{{SALARY}}`, `{{EMAIL}}`, etc.) before the message reaches the LLM.
+
+**Fallback:** If PII Guard is unreachable, the engine uses identical built-in regex patterns — zero downtime.
+
+See [docs/PII-PROTECTION.md](docs/PII-PROTECTION.md) for the full guide.
+
+### Prompt Injection Defense (Sunglasses)
+
+All user input is scanned using the [sunglasses](https://github.com/sunglasses-dev/sunglasses) library (1094 patterns, 65 attack categories, 23 languages).
+
+**Dual-layer scanning:**
+1. **Wizard endpoint** — Input scanned before reaching the agent. Blocked input returns HTTP 422.
+2. **Agent runner** — `run_agent()` scans again as a fallback.
+
+**Detection capabilities:** Direct instruction overrides, role-play attacks (DAN, persona switching), system prompt extraction, Unicode evasion (zero-width chars, RTL override, homoglyphs), base64-encoded attacks, and multimodal scanning (OCR on uploaded images).
+
+**Performance:** <3ms per scan, zero GPU required.
+
+**Audit trail:** Blocked attempts logged to `/srv/saasclaw/logs/prompt-guard.log`.
+
+### Defense-in-Depth Summary
+
+| Layer | What it does | Always active? |
+|-------|-------------|---------------|
+| **PII Guard** | Presidio + spaCy redacts sensitive patterns | Yes, every LLM call |
+| **Prompt injection** | Sunglasses blocks adversarial input | Yes, every wizard message |
+| **Docker sandbox** | Isolates shell commands per project | Yes, every tool call |
+| **Path validation** | Restricts file tools to workspace | Yes, every file operation |
+| **Network isolation** | Containers have no network | Yes, every sandbox |
+| **URL allowlist** | Restricts web_fetch to known docs | Yes, every fetch |
+| **Command blocklist** | Blocks dangerous shell commands | Yes, as safety net |
+
 ## Security Notes
 
 - **Docker group membership** — The `saasclaw` user is in the `docker` group, which is effectively root-equivalent on the host. This is acceptable for a single-admin VPS but would need rethinking for shared infrastructure.
