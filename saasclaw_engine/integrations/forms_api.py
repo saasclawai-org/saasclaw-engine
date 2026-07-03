@@ -218,7 +218,9 @@ def form_submissions(request, slug):
         return JsonResponse({'ok': False, 'error': 'Not found.'}, status=404)
 
     if not _can_manage(request.user, project):
-        return HttpResponseForbidden('Access denied.')
+        api_key = request.META.get('HTTP_X_FORM_KEY', '')
+        if not api_key or api_key != project.form_api_key:
+            return HttpResponseForbidden('Access denied.')
 
     if request.method == 'DELETE':
         FormSubmission.objects.filter(project=project).delete()
@@ -264,7 +266,9 @@ def form_submission_detail(request, slug, pk):
         return JsonResponse({'ok': False, 'error': 'Not found.'}, status=404)
 
     if not _can_manage(request.user, project):
-        return HttpResponseForbidden('Access denied.')
+        api_key = request.META.get('HTTP_X_FORM_KEY', '')
+        if not api_key or api_key != project.form_api_key:
+            return HttpResponseForbidden('Access denied.')
 
     try:
         submission = FormSubmission.objects.get(project=project, pk=pk)
