@@ -286,4 +286,50 @@ def form_submission_detail(request, slug, pk):
     })
 
 
-__all__ = ['submit_form', 'form_submissions', 'form_submission_detail']
+@require_http_methods(["GET"])
+@csrf_exempt
+def public_form_data(request, slug):
+    """Public read-only access to form submissions for a project.
+    Authenticated via API key (X-Form-Key header) — no user session required.
+    Used by static/SPA frontends to load their own data.
+    """
+    try:
+        project = Project.objects.get(slug=slug)
+    except Project.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "Not found."}, status=404)
+
+    # API key check (same as submit_form)
+    api_key = (
+        request.META.get("HTTP_X_FORM_KEY", "")
+        or ""
+    )
+    if not api_key or api_key != project.form_api_key:
+        return HttpResponseForbidden("Invalid or missing API key.")
+
+    # Only return preview data if requested from preview, production if from production
+    host = request.META.get("HTTP_HOST", "")
+    origin = request.META.get("HTTP_ORIGIN", "") or request.META.get("HTTP_REFERER", "")
+    source = host or origin
+    env = "production"
+    if project.preview_domain and project.preview_domain in source:
+        env = "preview"
+
+    submissions = FormSubmission.objects.filter(project=project, environment=env)
+    total = submissions.count()
+    limit = min(int(request.GET.get("limit", 500)), 500)
+    offset = int(request.GET.get("offset", 0))
+    items = submissions[offset:offset + limit]
+
+    return JsonResponse({
+        "ok": True,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "data": [
+            {"id": s.id, "form_data": s.form_data, "submitted_at": s.submitted_at.isoformat()}
+            for s in items
+        ],
+    })
+
+
+__all__ = ["submit_form", "form_submissions", "form_submission_detail", "public_form_data"]
