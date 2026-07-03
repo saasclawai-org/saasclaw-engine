@@ -81,12 +81,10 @@ def scan_user_input(text: str, source: str = "wizard") -> dict:
     # secret_detection scans reversed text and matches normal phrases like
     # "shown on the homepage" as PEM key patterns.
     if not result.is_clean and result.findings:
-        from sunglasses.engine import ScanResult
         filtered = [f for f in result.findings
                     if not (isinstance(f, dict) and f.get("category") == "secret_detection")]
         if not filtered:
             # All findings were false-positive secret detection — allow
-            result = ScanResult(is_clean=True, decision="allow", severity="clean", findings=[])
             response = {
                 "allowed": True,
                 "decision": "allow",
