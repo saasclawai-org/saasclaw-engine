@@ -1451,6 +1451,35 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "db_command",
+            "description": "Run a database command scoped to this project. Allowed: prisma migrate/db push/generate/studio/seed/validate, manage.py migrate/makemigrations/showmigrations/shell -c/loaddata/dumpdata. Runs outside sandbox to reach PostgreSQL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Command to run"},
+                    "timeout": {"type": "integer", "description": "Timeout seconds"}
+                },
+                "required": ["command"]
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "project_status",
+            "description": "Read-only project infrastructure: nginx config, service status, env vars (secrets masked), deploy history. Use to debug routing or verify service status.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "section": {"type": "string", "description": "Section: nginx/service/env/deploys/all"}
+                },
+                "required": []
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "deploy_project",
             "description": "Deploy the project to preview. Builds, commits, merges to main, deploys to VPS, configures nginx, and returns the live URL. Use when the user says 'ship it', 'deploy', 'go live', or similar. Only preview is available from the wizard; production deployments are done separately.",
             "parameters": {
@@ -1617,6 +1646,139 @@ def _test_api_tool(workspace_path, url='', method='GET', headers=None, body=''):
         return f'Error: {e}'
 
 
+
+def _db_command_tool(workspace_path, command="", timeout=60):
+    """Run a whitelisted DB command outside Docker sandbox."""
+    import subprocess as _sub, os as _os, django as _dj
+    _os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    sys.path.insert(0, "/srv/saasclaw/app")
+    _dj.setup()
+    from saasclaw_engine.studio_models.models import Workspace
+
+    safe = [
+        "npx prisma migrate", "npx prisma db push", "npx prisma generate",
+        "npx prisma studio", "npx prisma seed", "npx prisma validate",
+        "prisma migrate", "prisma db push", "prisma generate",
+        "prisma studio", "prisma seed", "prisma validate",
+        "python manage.py migrate", "python manage.py makemigrations",
+        "python manage.py showmigrations", "python manage.py shell -c",
+        "python manage.py loaddata", "python manage.py dumpdata",
+    ]
+    cmd = command.strip()
+    if not any(cmd.startswith(p) for p in safe):
+        return "Error: command not whitelisted. Allowed: prisma migrate/db push/generate/studio/seed/validate, manage.py migrate/makemigrations/showmigrations/shell -c/loaddata/dumpdata"
+    if "--sql" in cmd or "DROP " in cmd.upper() or "DELETE FROM" in cmd.upper():
+        return "Error: raw SQL not allowed."
+
+    ws = Workspace.objects.filter(local_path=workspace_path, is_active=True).first()
+    if not ws:
+        ws = Workspace.objects.filter(local_path=workspace_path).first()
+    if not ws:
+        return "Error: cannot resolve project."
+    project = ws.project
+    slug = project.slug
+    repo_path = f"/srv/saasclaw/projects/{slug}/repo"
+    if not _os.path.isdir(repo_path):
+        return f"Error: repo not found at {repo_path}"
+
+    env = dict(_os.environ)
+    env["PYTHONPATH"] = "/srv/saasclaw/app"
+    env["DJANGO_SETTINGS_MODULE"] = "config.settings"
+    try:
+        if project.environment_configs:
+            for ec in project.environment_configs.all():
+                for var in (ec.variables or []):
+                    k, v = var.get("key", ""), var.get("value", "")
+                    if k in ("DATABASE_URL","POSTGRES_PASSWORD","POSTGRES_HOST","POSTGRES_PORT","POSTGRES_USER","POSTGRES_DB","DJANGO_SECRET_KEY","SECRET_KEY"):
+                        env[k] = v
+    except Exception:
+        pass
+
+    try:
+        result = _sub.run(cmd, shell=True, cwd=repo_path, env=env,
+                          capture_output=True, text=True, timeout=timeout)
+        output = (result.stdout or "") + (result.stderr or "")
+        return output[-4000:] if len(output) > 4000 else output
+    except _sub.TimeoutExpired:
+        return f"Error: timed out after {timeout}s"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def _project_status_tool(workspace_path, section=""):
+    """Read-only project infrastructure info."""
+    import subprocess as _sub, os as _os, django as _dj
+    _os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    sys.path.insert(0, "/srv/saasclaw/app")
+    _dj.setup()
+    from saasclaw_engine.studio_models.models import Workspace
+    from saasclaw_engine.deployments.models import Deployment
+
+    ws = Workspace.objects.filter(local_path=workspace_path, is_active=True).first()
+    if not ws:
+        ws = Workspace.objects.filter(local_path=workspace_path).first()
+    if not ws:
+        return "Error: cannot resolve project."
+    project = ws.project
+    slug = project.slug
+    parts = []
+    sections = [s.strip() for s in section.split(",")] if section else ["all"]
+
+    if "nginx" in sections or "all" in sections:
+        nginx_path = f"/etc/nginx/sites-enabled/saasclaw-{slug}-preview"
+        if _os.path.isfile(nginx_path):
+            with open(nginx_path) as f:
+                parts.append(f"=== Nginx Config ({nginx_path}) ===\n{f.read()[:3000]}")
+        else:
+            parts.append(f"=== Nginx: no config at {nginx_path} ===")
+
+    if "service" in sections or "all" in sections:
+        svc = f"saasclaw-{slug}-preview"
+        try:
+            r = _sub.run(["systemctl", "is-active", svc], capture_output=True, text=True, timeout=5)
+            parts.append(f"=== Service: {svc} ===\nStatus: {r.stdout.strip()}")
+        except Exception:
+            parts.append(f"=== Service: {svc} not found (static or not deployed) ===")
+
+    if "env" in sections or "all" in sections:
+        parts.append("=== Environment Variables (secrets masked) ===")
+        try:
+            if project.environment_configs:
+                for ec in project.environment_configs.all():
+                    for var in (ec.variables or []):
+                        k, v = var.get("key", ""), var.get("value", "")
+                        if any(w in k.upper() for w in ["SECRET","PASSWORD","KEY","TOKEN","CREDENTIAL"]):
+                            parts.append(f"  {k} = {v[:8]}***" if len(v) > 8 else f"  {k} = ***")
+                        else:
+                            parts.append(f"  {k} = {v}")
+            else:
+                parts.append("  (no env config)")
+        except Exception as e:
+            parts.append(f"  Error: {e}")
+
+    if "deploys" in sections or "all" in sections:
+        parts.append("=== Recent Deploys ===")
+        try:
+            deps = Deployment.objects.filter(project=project).order_by("-created_at")[:5]
+            if not deps:
+                parts.append("  No deployments yet.")
+            for d in deps:
+                parts.append(f"  #{d.id} | {d.status} | {d.environment} | {d.created_at}")
+        except Exception as e:
+            parts.append(f"  Error: {e}")
+
+    if "all" in sections:
+        parts.append("=== Project Info ===")
+        parts.append(f"  Slug: {slug}")
+        parts.append(f"  Runtime: {project.runtime or "unknown"}")
+        parts.append(f"  Preview: {project.preview_domain or "not set"}")
+        if project.form_api_key:
+            parts.append(f"  Form API key: {project.form_api_key[:12]}***")
+        else:
+            parts.append("  Form API key: not set")
+
+    return "\n".join(parts)
+
 def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = False) -> str:
     """Dispatch a tool call by name.
     
@@ -1644,6 +1806,8 @@ def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = 
         "run_command": lambda: run_command(workspace_path, args.get("command", ""), args.get("timeout", 120)),
         "read_logs": lambda: _read_logs_tool(workspace_path, args.get("source", "django"), int(args.get("lines", 50)), args.get("project_slug", "")),
         "test_api": lambda: _test_api_tool(workspace_path, args.get("url", ""), args.get("method", "GET"), args.get("headers"), args.get("body", "")),
+        "db_command": lambda: _db_command_tool(workspace_path, args.get("command", ""), int(args.get("timeout", 60))),
+        "project_status": lambda: _project_status_tool(workspace_path, args.get("section", "all")),
         "deploy_project": lambda: _deploy_project_tool(workspace_path, args.get("environment", "preview")),
         "web_fetch": lambda: web_fetch(workspace_path, args.get("url", ""), args.get("max_chars", 5000)),
         "web_search": lambda: web_search(workspace_path, args.get("query", ""), args.get("count", 5)),
