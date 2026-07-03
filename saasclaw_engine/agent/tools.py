@@ -1418,6 +1418,39 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "read_logs",
+            "description": "Read server or deploy logs to debug issues. Use after deploying or when something is not working.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "enum": ["django", "gunicorn", "nginx", "deploy"], "description": "Log source"},
+                    "lines": {"type": "integer", "description": "Number of lines to read"},
+                    "project_slug": {"type": "string", "description": "Project slug to filter"}
+                },
+                "required": ["source"]
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "test_api",
+            "description": "Test an API endpoint to verify it works. Returns status code and response. Use after writing API code to confirm endpoints return 200.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL or path to test"},
+                    "method": {"type": "string", "enum": ["GET", "POST", "DELETE"], "description": "HTTP method"},
+                    "headers": {"type": "object", "description": "Headers e.g. {X-Form-Key: value}"},
+                    "body": {"type": "string", "description": "Request body for POST"}
+                },
+                "required": ["url"]
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "deploy_project",
             "description": "Deploy the project to preview. Builds, commits, merges to main, deploys to VPS, configures nginx, and returns the live URL. Use when the user says 'ship it', 'deploy', 'go live', or similar. Only preview is available from the wizard; production deployments are done separately.",
             "parameters": {
@@ -1520,6 +1553,70 @@ TOOL_DEFINITIONS = [
 ]
 
 
+
+def _read_logs_tool(workspace_path, source='django', lines=50, project_slug=''):
+    import subprocess as _sub, os as _os
+    log_map = {
+        'django': '/srv/saasclaw/logs/django.log',
+        'gunicorn': '/srv/saasclaw/logs/gunicorn-error.log',
+        'nginx': '/srv/saasclaw/logs/nginx-error.log',
+        'deploy': None,
+    }
+    if source == 'deploy' and project_slug:
+        import django as _dj
+        import sys as _sys
+        _os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+        _sys.path.insert(0, '/srv/saasclaw/app')
+        _dj.setup()
+        from saasclaw_engine.deployments.models import Deployment
+        from saasclaw_engine.projects.models import Project as _P
+        p = _P.objects.filter(slug=project_slug).first()
+        if not p:
+            return f"No project '{project_slug}'"
+        deps = Deployment.objects.filter(project=p).order_by('-created_at')[:3]
+        if not deps:
+            return 'No deployments found.'
+        lines_out = []
+        for d in deps:
+            lines_out.append(f"Deploy #{d.id} ({d.status}) at {d.created_at}")
+            if d.output:
+                lines_out.append(d.output[-2000:])
+            lines_out.append('')
+        return '\n'.join(lines_out)
+    log_path = log_map.get(source, '')
+    if not log_path or not _os.path.isfile(log_path):
+        return f"Log not found for '{source}'. Available: {list(log_map.keys())}"
+    try:
+        result = _sub.run(['tail', '-n', str(lines), log_path], capture_output=True, text=True, timeout=10)
+        output = result.stdout
+        if project_slug:
+            filtered = [l for l in output.split('\n') if project_slug.lower() in l.lower()]
+            output = '\n'.join(filtered) if filtered else '(no matching lines)'
+        return output[-4000:]
+    except Exception as e:
+        return f'Error: {e}'
+
+
+def _test_api_tool(workspace_path, url='', method='GET', headers=None, body=''):
+    import subprocess as _sub
+    cmd = ['curl', '-s', '-w', '\n%{http_code}', '--max-time', '10']
+    if method:
+        cmd.extend(['-X', method])
+    for k, v in (headers or {}).items():
+        cmd.extend(['-H', f'{k}: {v}'])
+    if body:
+        cmd.extend(['-d', body])
+    cmd.append(url)
+    try:
+        result = _sub.run(cmd, capture_output=True, text=True, timeout=15)
+        parts = result.stdout.rsplit('\n', 1)
+        body_out = parts[0] if len(parts) == 2 else result.stdout
+        status = parts[1] if len(parts) == 2 else 'unknown'
+        return f'Status: {status}\n{body_out[:2000]}'
+    except Exception as e:
+        return f'Error: {e}'
+
+
 def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = False) -> str:
     """Dispatch a tool call by name.
     
@@ -1545,6 +1642,8 @@ def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = 
         "git_diff": lambda: git_diff(workspace_path, args.get("cached", False)),
         "git_commit": lambda: git_commit(workspace_path, args.get("message", "Agent commit")),
         "run_command": lambda: run_command(workspace_path, args.get("command", ""), args.get("timeout", 120)),
+        "read_logs": lambda: _read_logs_tool(workspace_path, args.get("source", "django"), int(args.get("lines", 50)), args.get("project_slug", "")),
+        "test_api": lambda: _test_api_tool(workspace_path, args.get("url", ""), args.get("method", "GET"), args.get("headers"), args.get("body", "")),
         "deploy_project": lambda: _deploy_project_tool(workspace_path, args.get("environment", "preview")),
         "web_fetch": lambda: web_fetch(workspace_path, args.get("url", ""), args.get("max_chars", 5000)),
         "web_search": lambda: web_search(workspace_path, args.get("query", ""), args.get("count", 5)),
