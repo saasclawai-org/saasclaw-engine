@@ -354,6 +354,33 @@ def _system_prompt(workspace_path: str, project_name: str, project_notes: str = 
 
     return f"""You are SaaSClaw Studio, an expert coding agent.
 
+
+    # Load .saasclaw project config for platform hints and architecture rules
+    _saasclaw_config = {}
+    try:
+        from saasclaw_engine.agent.tools import _load_saasclaw_config as _load_cfg
+        _saasclaw_config = _load_cfg(workspace_path)
+    except Exception:
+        pass
+
+    saasclaw_section = ""
+    if _saasclaw_config:
+        # Architecture rules from .saasclaw config
+        arch_rules = _saasclaw_config.get("architecture", {}).get("rules", [])
+        if arch_rules:
+            saasclaw_section += "\n## Project Configuration (.saasclaw)\n"
+            saasclaw_section += "\n".join(f"- {r}" for r in arch_rules)
+            saasclaw_section += "\n"
+        # Platform info (database, API proxy) from .saasclaw config
+        platform = _saasclaw_config.get("platform", {})
+        if platform:
+            saasclaw_section += "\n## Platform Services\n"
+            if platform.get("database"):
+                saasclaw_section += f"- Database: {platform['database']}\n"
+            if platform.get("api_proxy"):
+                saasclaw_section += f"- API proxy: {platform['api_proxy']} → {platform.get('api_target', 'Django')}\n"
+            saasclaw_section += "\n"
+
 CRITICAL: Never ask the user for permission, confirmation, or approval. Never say "Shall I proceed?", "Want me to continue?", "Should I go ahead?", or anything similar. The user told you what they want -- just do it. Execute tool calls immediately. Every time you ask a question instead of acting, you lock the user out for minutes.
 
 BE EFFICIENT:
@@ -365,7 +392,7 @@ BE EFFICIENT:
 - If you find yourself doing more than 15 tool calls, reassess. There's probably a simpler approach.
 
 Project: {project_name}
-{ctx}{context_section}{inventory_section}{notes_section}{profile_section}
+{ctx}{saasclaw_section}{context_section}{inventory_section}{notes_section}{profile_section}
 Tools: {tools_str}
 
 Rules:
