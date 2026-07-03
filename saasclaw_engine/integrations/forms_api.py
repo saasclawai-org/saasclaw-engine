@@ -312,7 +312,7 @@ def public_form_data(request, slug):
         return HttpResponseForbidden("Invalid or missing API key.")
 
     # Only return preview data if requested from preview, production if from production
-    host = request.META.get("HTTP_HOST", "")
+    host = request.META.get("HTTP_X_FORWARDED_HOST", "") or request.META.get("HTTP_HOST", "")
     origin = request.META.get("HTTP_ORIGIN", "") or request.META.get("HTTP_REFERER", "")
     source = host or origin
     env = "production"
