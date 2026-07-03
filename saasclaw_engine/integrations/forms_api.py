@@ -209,6 +209,7 @@ def submit_form(request, slug):
     return JsonResponse({'ok': True, 'id': submission.id}, status=201)
 
 
+@csrf_exempt
 @require_http_methods(["GET", "DELETE"])
 def form_submissions(request, slug):
     """List or bulk-delete form submissions. Project owner/staff only."""
@@ -256,6 +257,7 @@ def form_submissions(request, slug):
     })
 
 
+@csrf_exempt
 @csrf_exempt
 @require_http_methods(["GET", "DELETE"])
 def form_submission_detail(request, slug, pk):
