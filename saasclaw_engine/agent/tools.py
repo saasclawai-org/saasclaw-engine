@@ -1649,9 +1649,9 @@ def _test_api_tool(workspace_path, url='', method='GET', headers=None, body=''):
 
 def _db_command_tool(workspace_path, command="", timeout=60):
     """Run a whitelisted DB command outside Docker sandbox."""
-    import subprocess as _sub, os as _os, django as _dj
+    import subprocess as _sub, os as _os, sys as _sys, django as _dj
     _os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
-    sys.path.insert(0, "/srv/saasclaw/app")
+    _sys.path.insert(0, "/srv/saasclaw/app")
     _dj.setup()
     from saasclaw_engine.studio_models.models import Workspace
 
@@ -1685,12 +1685,11 @@ def _db_command_tool(workspace_path, command="", timeout=60):
     env["PYTHONPATH"] = "/srv/saasclaw/app"
     env["DJANGO_SETTINGS_MODULE"] = "config.settings"
     try:
-        if project.environment_configs:
-            for ec in project.environment_configs.all():
-                for var in (ec.variables or []):
-                    k, v = var.get("key", ""), var.get("value", "")
-                    if k in ("DATABASE_URL","POSTGRES_PASSWORD","POSTGRES_HOST","POSTGRES_PORT","POSTGRES_USER","POSTGRES_DB","DJANGO_SECRET_KEY","SECRET_KEY"):
-                        env[k] = v
+        for ec in project.environments.all():
+            for var in ec.variables.all():
+                k, v = var.key, var.value or ""
+                if k in ("DATABASE_URL","POSTGRES_PASSWORD","POSTGRES_HOST","POSTGRES_PORT","POSTGRES_USER","POSTGRES_DB","DJANGO_SECRET_KEY","SECRET_KEY"):
+                    env[k] = v
     except Exception:
         pass
 
@@ -1707,9 +1706,9 @@ def _db_command_tool(workspace_path, command="", timeout=60):
 
 def _project_status_tool(workspace_path, section=""):
     """Read-only project infrastructure info."""
-    import subprocess as _sub, os as _os, django as _dj
+    import subprocess as _sub, os as _os, sys as _sys, django as _dj
     _os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
-    sys.path.insert(0, "/srv/saasclaw/app")
+    _sys.path.insert(0, "/srv/saasclaw/app")
     _dj.setup()
     from saasclaw_engine.studio_models.models import Workspace
     from saasclaw_engine.deployments.models import Deployment
@@ -1743,16 +1742,17 @@ def _project_status_tool(workspace_path, section=""):
     if "env" in sections or "all" in sections:
         parts.append("=== Environment Variables (secrets masked) ===")
         try:
-            if project.environment_configs:
-                for ec in project.environment_configs.all():
-                    for var in (ec.variables or []):
-                        k, v = var.get("key", ""), var.get("value", "")
-                        if any(w in k.upper() for w in ["SECRET","PASSWORD","KEY","TOKEN","CREDENTIAL"]):
-                            parts.append(f"  {k} = {v[:8]}***" if len(v) > 8 else f"  {k} = ***")
-                        else:
-                            parts.append(f"  {k} = {v}")
-            else:
-                parts.append("  (no env config)")
+            found = False
+            for ec in project.environments.all():
+                for var in ec.variables.all():
+                    found = True
+                    k, v = var.key, var.value or ""
+                    if any(w in k.upper() for w in ["SECRET","PASSWORD","KEY","TOKEN","CREDENTIAL"]):
+                        parts.append(f"  {k} = {v[:8]}***" if len(v) > 8 else f"  {k} = ***")
+                    else:
+                        parts.append(f"  {k} = {v}")
+            if not found:
+                parts.append("  (no env vars set)")
         except Exception as e:
             parts.append(f"  Error: {e}")
 
@@ -1763,7 +1763,7 @@ def _project_status_tool(workspace_path, section=""):
             if not deps:
                 parts.append("  No deployments yet.")
             for d in deps:
-                parts.append(f"  #{d.id} | {d.status} | {d.environment} | {d.created_at}")
+                parts.append(f"  #{d.id} | {d.status} | {d.environment.slug} | {d.created_at}")
         except Exception as e:
             parts.append(f"  Error: {e}")
 
