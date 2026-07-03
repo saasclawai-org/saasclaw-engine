@@ -658,14 +658,7 @@ Vite (React/Vue/Svelte), Next.js (SSR), Django, Flask, FastAPI, HTMX, Hugo, .NET
 
 ## Architecture
 
-```
-Your UI (Django views, templates, static files)
-    ↓ imports
-SaaSClaw Engine (saasclaw_engine.*)
-    ↓ manages
-Git Bare Repos → Worktree Workspace → Deploy Pipeline → Nginx + SSL
-```
-
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full system architecture, including the dual-gateway LLM setup, Docker sandbox isolation, multi-tenancy model, and concurrency scaling.
 The engine handles all backend logic. You build the frontend — the wizard, file editor, project dashboard, settings — on top.
 
 ## PII Protection
