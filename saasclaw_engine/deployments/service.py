@@ -144,6 +144,9 @@ def _assert_repo_binding(project: Project, repo_path: Path) -> None:
     if not project.repo_url:
         return
     actual = _remote_repo_url(repo_path)
+    if not actual:
+        # Can't read remote (permission issue, no .git, etc.) — skip check
+        return
     # Skip drift check if origin is a local bare repo (used for wizard-managed deploys)
     if actual.startswith('/'):
         return
