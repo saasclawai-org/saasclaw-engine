@@ -1640,14 +1640,80 @@ def _deploy_environment(project: Project, environment_name: str, triggered_by=No
     return deployment
 
 
+def _push_to_github_after_deploy(project: Project, triggered_by=None) -> None:
+    """Push deploy repo to GitHub if connected. Swaps remote temporarily."""
+    if not project.repo_url or 'github.com' not in project.repo_url:
+        return
+    if not project.repo_owner or not project.repo_name:
+        return
+
+    repo_path = Path(project.workspace_root) / 'repo'
+    if not (repo_path / '.git').exists():
+        return
+
+    import subprocess as sp
+    import os, base64 as _b64, re as _re
+    from django.contrib.auth import get_user_model
+    from allauth.socialaccount.models import SocialAccount, SocialToken
+
+    User = get_user_model()
+    # Try triggered_by user first, then project owner
+    user = triggered_by if triggered_by and hasattr(triggered_by, '_state') else project.user
+    if not user:
+        return
+    social = SocialAccount.objects.filter(user=user, provider='github').first()
+    if not social and project.user and project.user != user:
+        social = SocialAccount.objects.filter(user=project.user, provider='github').first()
+    if not social:
+        return
+    token_obj = SocialToken.objects.filter(account=social).first()
+    if not token_obj:
+        return
+
+    token = token_obj.token
+    basic = _b64.b64encode(f"x-access-token:{token}".encode()).decode()
+    https_url = f"https://github.com/{project.repo_owner}/{project.repo_name}.git"
+    bare_url = f"/srv/saasclaw/git/{project.slug}.git"
+
+    env = dict(os.environ)
+    env["GIT_AUTHOR_NAME"] = "SaaSClaw Agent"
+    env["GIT_AUTHOR_EMAIL"] = "saasclaw@saasclaw.ai"
+    env["GIT_COMMITTER_NAME"] = "SaaSClaw Agent"
+    env["GIT_COMMITTER_EMAIL"] = "saasclaw@saasclaw.ai"
+
+    # Swap to HTTPS
+    sp.run(['git', 'remote', 'set-url', 'origin', https_url],
+           cwd=str(repo_path), capture_output=True, text=True, timeout=10)
+    try:
+        result = sp.run(
+            ['git', '-c', f'http.https://github.com/.extraheader=AUTHORIZATION: basic {basic}',
+             'push', 'origin', 'main'],
+            cwd=str(repo_path), capture_output=True, text=True, timeout=30, env=env,
+        )
+        if result.returncode == 0:
+            logger.info("Pushed %s to GitHub: %s/%s", project.slug, project.repo_owner, project.repo_name)
+        else:
+            logger.warning("GitHub push failed for %s: %s", project.slug, result.stderr.strip())
+    finally:
+        # Always restore bare repo remote
+        sp.run(['git', 'remote', 'set-url', 'origin', bare_url],
+               cwd=str(repo_path), capture_output=True, text=True, timeout=10)
+
+
 def deploy_preview(project: Project, triggered_by=None) -> Deployment:
     """Deploy to the project's preview environment."""
-    return _deploy_environment(project, 'preview', triggered_by=triggered_by)
+    deployment = _deploy_environment(project, 'preview', triggered_by=triggered_by)
+    if deployment.status == Deployment.Status.SUCCEEDED:
+        _push_to_github_after_deploy(project, triggered_by=triggered_by)
+    return deployment
 
 
 def deploy_production(project: Project, triggered_by=None) -> Deployment:
     """Deploy to the project's production environment."""
-    return _deploy_environment(project, 'production', triggered_by=triggered_by)
+    deployment = _deploy_environment(project, 'production', triggered_by=triggered_by)
+    if deployment.status == Deployment.Status.SUCCEEDED:
+        _push_to_github_after_deploy(project, triggered_by=triggered_by)
+    return deployment
 
 
 def decommission_project(project_slug: str, project_name: str = '') -> None:
