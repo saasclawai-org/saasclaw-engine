@@ -143,10 +143,14 @@ def _assert_repo_binding(project: Project, repo_path: Path) -> None:
     """Verify the repo's remote matches the project's configured repo URL."""
     if not project.repo_url:
         return
-    actual = _normalize_repo_url(_remote_repo_url(repo_path))
-    expected = _normalize_repo_url(project.repo_url)
-    if actual and expected and actual != expected:
-        raise RuntimeError(f'Repo remote drift: expected {expected}, found {actual}')
+    actual = _remote_repo_url(repo_path)
+    # Skip drift check if origin is a local bare repo (used for wizard-managed deploys)
+    if actual.startswith('/'):
+        return
+    expected = _normalize_repo_url(actual)
+    remote_expected = _normalize_repo_url(project.repo_url)
+    if expected and remote_expected and expected != remote_expected:
+        raise RuntimeError(f'Repo remote drift: expected {remote_expected}, found {expected}')
 
 
 def _refresh_repo_checkout_for_deploy(project: Project, repo_path: Path, log_file: Path) -> None:
