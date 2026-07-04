@@ -240,7 +240,8 @@ def db_query(request, slug, env):
             'error': 'Write queries not allowed. Set {"write": true} to enable.',
         }, status=403)
 
-    # Limit rows for read queries
+    # Strip trailing semicolons and limit rows for read queries
+    sql = sql.rstrip('; ')
     if first_word in ('select', 'with') and 'LIMIT' not in sql.upper():
         sql += f" LIMIT {MAX_ROWS}"
 
