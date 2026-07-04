@@ -130,13 +130,6 @@ def _provider_config(session_override: str = None, model_override: str = None, u
             "model": model_override or os.environ.get("STUDIO_MODEL", ""),
             "format": "openai",
         },
-        "groq": {
-            "provider": "groq",
-            "api_key": user_key or os.environ.get("GROQ_API_KEY", getattr(settings, "GROQ_API_KEY", "")),
-            "base_url": "https://api.groq.com/openai/v1",
-            "model": model_override or "openai/gpt-oss-120b",
-            "format": "openai",
-        },
     }
 
     return configs.get(provider, configs["zai"])
@@ -144,18 +137,8 @@ def _provider_config(session_override: str = None, model_override: str = None, u
 
 # Catalog of available models per provider, for the UI dropdown
 AVAILABLE_MODELS = {
-    "groq": {
-        "label": "Groq",
-        "models": [
-            {"id": "openai/gpt-oss-120b", "name": "GPT-OSS 120B", "context": 131072, "vision": False},
-            {"id": "openai/gpt-oss-20b", "name": "GPT-OSS 20B", "context": 131072, "vision": False},
-            {"id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B", "context": 131072, "vision": False},
-            {"id": "groq/compound", "name": "Compound (auto+web)", "context": 131072, "vision": False},
-        ],
-    },
     "zai": [
         {"model": "glm-5-turbo", "label": "GLM-5 Turbo (fast, cheap)", "vision": False},
-        {"model": "glm-5.2", "label": "GLM-5.2 (latest, 1M context)", "vision": False},
         {"model": "glm-5.1", "label": "GLM-5.1 (long-horizon agent)", "vision": False},
         {"model": "glm-5", "label": "GLM-5 (foundation)", "vision": False},
         {"model": "glm-5v-turbo", "label": "GLM-5V-Turbo (vision)", "vision": True},
