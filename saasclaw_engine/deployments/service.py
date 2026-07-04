@@ -1247,6 +1247,20 @@ def _deploy_node_ssr_environment(project: Project, environment: Environment, dep
     env_file.write_text('\n'.join(env_lines) + '\n', encoding='utf-8')
     _normalize_ownership(env_file, log_file)
 
+    # Auto-run Prisma migrations if prisma/schema.prisma exists
+    prisma_schema = repo_path / 'prisma' / 'schema.prisma'
+    if prisma_schema.is_file():
+        with log_file.open('a', encoding='utf-8') as h:
+            h.write('Detected Prisma schema, running db push...\n')
+        prisma_env = dict(build_env or {})
+        for line in env_lines:
+            if '=' in line and not line.startswith('#'):
+                k, _, v = line.partition('=')
+                prisma_env[k] = v
+        _run_command('npx prisma db push --skip-generate', repo_path, log_file, env=prisma_env)
+        with log_file.open('a', encoding='utf-8') as h:
+            h.write('Prisma db push complete.\n')
+
     # Get the node/npm binary paths
     if node_major and node_bin_dir:
         npm_bin = f"{node_bin_dir}/npm"
