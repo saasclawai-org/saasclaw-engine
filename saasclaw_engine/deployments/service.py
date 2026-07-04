@@ -576,7 +576,7 @@ def _deploy_django_environment(project: Project, environment: Environment, deplo
         'DJANGO_SECRET_KEY': django_secret_key,
         'DJANGO_SETTINGS_MODULE': django_settings_module,
         'DJANGO_DEBUG': 'true' if environment.name == 'preview' else 'false',
-        'DJANGO_ALLOWED_HOSTS': environment.domain,
+        'DJANGO_ALLOWED_HOSTS': environment.domain + ',127.0.0.1',
         'DJANGO_CSRF_TRUSTED_ORIGINS': f'https://{environment.domain}',
         'ALLOWED_HOSTS': environment.domain,
         'CSRF_TRUSTED_ORIGINS': f'https://{environment.domain}',
@@ -619,7 +619,23 @@ def _deploy_django_environment(project: Project, environment: Environment, deplo
 
     # Django-specific steps (skip for FastAPI/Flask without manage.py)
     has_manage = (repo_path / 'manage.py').exists()
+    has_frontend = False
+    frontend_web_root = None
     if has_manage:
+        # React frontend build (e.g. react-django template)
+        frontend_dir = repo_path / 'frontend'
+        frontend_pkg = frontend_dir / 'package.json'
+        if frontend_dir.is_dir() and frontend_pkg.is_file():
+            import shutil as _shutil
+            npm_cache = '/tmp/npm_cache'
+            os.makedirs(npm_cache, exist_ok=True)
+            _run_command(f'npm install --cache {npm_cache}', str(frontend_dir), log_file)
+            _run_command(f'npx vite build --outDir dist', str(frontend_dir), log_file)
+            frontend_dist = frontend_dir / 'dist'
+            if frontend_dist.is_dir():
+                frontend_web_root = str(frontend_dist)
+                has_frontend = True
+
         # Migrate
         _run_command(f'bash -lc "set -a && source {env_file} && {venv_path}/bin/python manage.py migrate"', repo_path, log_file)
 
@@ -649,8 +665,13 @@ def _deploy_django_environment(project: Project, environment: Environment, deplo
     )
 
     # Healthcheck
-    health_url = f'https://{environment.domain}{environment.healthcheck_path or "/health/"}'
+    healthcheck_path = '/api/health/' if has_frontend else (environment.healthcheck_path or '/health/')
+    health_url = f'https://{environment.domain}{healthcheck_path}'
     _wait_for_http_healthcheck(health_url, log_file)
+
+    # If project has a React frontend, rewrite nginx to serve SPA + proxy API
+    if has_frontend and frontend_web_root:
+        _ensure_nginx_spa_proxy(service_name, environment.domain, environment.app_port, frontend_web_root, static_root, log_file)
 
     environment.web_root = str(static_root)
     environment.deploy_path = str(runtime_root)
@@ -891,6 +912,75 @@ def _write_and_validate_nginx(site_name, nginx_content, log_file=None):
         return False
 
     return True
+
+def _ensure_nginx_spa_proxy(service_name, domain, port, frontend_root, static_root, log_file=None):
+    """Write nginx config that serves a React SPA and proxies /api/ to Django."""
+    ssl_cert, ssl_key = _pick_ssl_certs(domain)
+    nginx_content = '\n'.join([
+        'server {',
+        '    listen 80;',
+        '    listen [::]:80;',
+        '    server_name ' + domain + ';',
+        '    return 301 https://$host$request_uri;',
+        '}',
+        '',
+        'server {',
+        '    listen 443 ssl;',
+        '    listen [::]:443 ssl;',
+        '    server_name ' + domain + ';',
+        '',
+        '    ssl_certificate ' + ssl_cert + ';',
+        '    ssl_certificate_key ' + ssl_key + ';',
+        '    include /etc/letsencrypt/options-ssl-nginx.conf;',
+        '    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;',
+        '',
+        '    client_max_body_size 25m;',
+        '',
+        '    include /etc/nginx/snippets/saasclaw-preview-branding.conf;',
+        '',
+        '    root ' + frontend_root + ';',
+        '    index index.html;',
+        '',
+        '    # Django static files (admin, DRF, etc.)',
+        '    location /static/ {',
+        '        alias ' + str(static_root) + '/;',
+        '    }',
+        '',
+        '    # Django API + admin',
+        '    location /api/ {',
+        '        proxy_pass http://127.0.0.1:' + str(port) + ';',
+        '        proxy_set_header Host $host;',
+        '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+        '        proxy_set_header X-Forwarded-Proto $scheme;',
+        '        proxy_redirect off;',
+        '    }',
+        '',
+        '    location /admin/ {',
+        '        proxy_pass http://127.0.0.1:' + str(port) + ';',
+        '        proxy_set_header Host $host;',
+        '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+        '        proxy_set_header X-Forwarded-Proto $scheme;',
+        '        proxy_redirect off;',
+        '    }',
+        '',
+        '    location /api-auth/ {',
+        '        proxy_pass http://127.0.0.1:' + str(port) + ';',
+        '        proxy_set_header Host $host;',
+        '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+        '        proxy_set_header X-Forwarded-Proto $scheme;',
+        '        proxy_redirect off;',
+        '    }',
+        '',
+        '    # SPA fallback - serve index.html for all non-file routes',
+        '    location / {',
+        '        try_files $uri $uri/ /index.html;',
+        '    }',
+        '}',
+        '',
+    ])
+    if not _write_and_validate_nginx(service_name, nginx_content, log_file=log_file):
+        raise RuntimeError(f'Failed to write/validate SPA nginx config for {service_name}')
+
 
 def _ensure_nginx_proxy(service_name, domain, port, log_file=None, upgrade=False):
     """Write (or overwrite) an nginx reverse-proxy site config and reload."""
