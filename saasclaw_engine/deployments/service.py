@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 import secrets
 import shutil
@@ -636,7 +637,8 @@ def _deploy_django_environment(project: Project, environment: Environment, deplo
                 frontend_web_root = str(frontend_dist)
                 has_frontend = True
 
-        # Migrate
+        # Migrate (auto-create migrations for new apps)
+        _run_command(f'bash -lc "set -a && source {env_file} && {venv_path}/bin/python manage.py makemigrations --noinput 2>/dev/null || true"', repo_path, log_file)
         _run_command(f'bash -lc "set -a && source {env_file} && {venv_path}/bin/python manage.py migrate"', repo_path, log_file)
 
         # Admin user
@@ -665,13 +667,12 @@ def _deploy_django_environment(project: Project, environment: Environment, deplo
     )
 
     # Healthcheck
+    # Write SPA nginx BEFORE healthcheck so it routes correctly
+    if has_frontend and frontend_web_root:
+        _ensure_nginx_spa_proxy(service_name, environment.domain, environment.app_port, frontend_web_root, static_root, log_file)
     healthcheck_path = '/api/health/' if has_frontend else (environment.healthcheck_path or '/health/')
     health_url = f'https://{environment.domain}{healthcheck_path}'
     _wait_for_http_healthcheck(health_url, log_file)
-
-    # If project has a React frontend, rewrite nginx to serve SPA + proxy API
-    if has_frontend and frontend_web_root:
-        _ensure_nginx_spa_proxy(service_name, environment.domain, environment.app_port, frontend_web_root, static_root, log_file)
 
     environment.web_root = str(static_root)
     environment.deploy_path = str(runtime_root)
