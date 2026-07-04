@@ -205,6 +205,7 @@ def _refresh_repo_checkout_for_deploy(project: Project, repo_path: Path, log_fil
 
         # Clean __pycache__ to avoid permission issues on git reset
         _run_command('find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true', repo_path, log_file)
+        _normalize_ownership(repo_path / '.git', log_file)
 
         git_ssh = 'GIT_SSH_COMMAND="ssh -i /srv/saasclaw/.ssh/id_ed25519_deploy -o StrictHostKeyChecking=no" '
         _run_command(f'{git_ssh}git fetch origin', repo_path, log_file)
