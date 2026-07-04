@@ -1498,6 +1498,29 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
         handle.write(f'.NET app port: {environment.app_port}\n')
         handle.write(f'.NET service name: {service_name}\n')
 
+    # Build frontend before dotnet publish (so published output includes static assets)
+    frontend_dir = repo_path / 'frontend'
+    frontend_pkg = frontend_dir / 'package.json'
+    vite_config = frontend_dir / 'vite.config.js'
+    has_frontend = False
+    vite_outputs_wwwroot = False
+    if frontend_dir.is_dir() and frontend_pkg.is_file():
+        if vite_config.is_file():
+            vc_content = vite_config.read_text()
+            if '../wwwroot' in vc_content or 'wwwroot' in vc_content:
+                vite_outputs_wwwroot = True
+        npm_cache = '/tmp/npm_cache'
+        os.makedirs(npm_cache, exist_ok=True)
+        _run_command(f'npm install --cache {npm_cache}', str(frontend_dir), log_file)
+        if vite_outputs_wwwroot:
+            _run_command(f'npx vite build', str(frontend_dir), log_file)
+            has_frontend = True
+
+    # Clean stale obj/Release to avoid dotnet publish stale asset errors
+    obj_release = repo_path / 'obj' / 'Release'
+    if obj_release.is_dir():
+        _run_command('find . -type d -name "compressed" -exec rm -rf {} + 2>/dev/null || true', obj_release, log_file)
+
     # Restore and publish
     _run_command(f'{dotnet} restore', repo_path, log_file)
     publish_dir.mkdir(parents=True, exist_ok=True)
@@ -1509,21 +1532,14 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
     # Write env file next to published dll so systemd can pick it up
     _write_text(publish_dir / '.env', _serialize_env_file(env_values))
 
-    # React frontend build (e.g. react-dotnet template)
-    has_frontend = False
+    # Determine nginx config based on frontend setup
     frontend_web_root = None
     static_root = publish_dir / 'wwwroot'
-    frontend_dir = repo_path / 'frontend'
-    frontend_pkg = frontend_dir / 'package.json'
-    if frontend_dir.is_dir() and frontend_pkg.is_file():
-        npm_cache = '/tmp/npm_cache'
-        os.makedirs(npm_cache, exist_ok=True)
-        _run_command(f'npm install --cache {npm_cache}', str(frontend_dir), log_file)
-        _run_command(f'npx vite build --outDir dist', str(frontend_dir), log_file)
+    if has_frontend and not vite_outputs_wwwroot:
+        # Vite outputs to frontend/dist — nginx serves static files
         frontend_dist = frontend_dir / 'dist'
         if frontend_dist.is_dir():
             frontend_web_root = str(frontend_dist)
-            has_frontend = True
 
     # Systemd service (always updated)
     _ensure_systemd_service(
@@ -1534,7 +1550,7 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
         description=f'SaaSClaw .NET app for {service_name}',
     )
 
-    # Nginx proxy (SPA or standard)
+    # Nginx proxy (SPA via nginx, or standard if dotnet serves static files)
     if has_frontend and frontend_web_root:
         _ensure_nginx_spa_proxy(service_name, environment.domain, environment.app_port, frontend_web_root, str(static_root) if static_root.is_dir() else None, log_file)
     else:
@@ -1544,7 +1560,7 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
     _restart_service(service_name, log_file)
 
     # Healthcheck
-    healthcheck_path = '/health/' if has_frontend else (environment.healthcheck_path or '/health')
+    healthcheck_path = '/health'
     health_url = f'https://{environment.domain}{healthcheck_path}'
     _wait_for_http_healthcheck(health_url, log_file)
 
