@@ -1517,9 +1517,10 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
             has_frontend = True
 
     # Clean stale obj/Release to avoid dotnet publish stale asset errors
+    import shutil
     obj_release = repo_path / 'obj' / 'Release'
     if obj_release.is_dir():
-        _run_command('find . -type d -name "compressed" -exec rm -rf {} + 2>/dev/null || true', obj_release, log_file)
+        shutil.rmtree(obj_release, ignore_errors=True)
 
     # Restore and publish
     _run_command(f'{dotnet} restore', repo_path, log_file)
