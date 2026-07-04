@@ -1499,6 +1499,22 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
     # Write env file next to published dll so systemd can pick it up
     _write_text(publish_dir / '.env', _serialize_env_file(env_values))
 
+    # React frontend build (e.g. react-dotnet template)
+    has_frontend = False
+    frontend_web_root = None
+    static_root = publish_dir / 'wwwroot'
+    frontend_dir = repo_path / 'frontend'
+    frontend_pkg = frontend_dir / 'package.json'
+    if frontend_dir.is_dir() and frontend_pkg.is_file():
+        npm_cache = '/tmp/npm_cache'
+        os.makedirs(npm_cache, exist_ok=True)
+        _run_command(f'npm install --cache {npm_cache}', str(frontend_dir), log_file)
+        _run_command(f'npx vite build --outDir dist', str(frontend_dir), log_file)
+        frontend_dist = frontend_dir / 'dist'
+        if frontend_dist.is_dir():
+            frontend_web_root = str(frontend_dist)
+            has_frontend = True
+
     # Systemd service (always updated)
     _ensure_systemd_service(
         service_name=service_name,
@@ -1508,14 +1524,18 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
         description=f'SaaSClaw .NET app for {service_name}',
     )
 
-    # Nginx proxy (always updated)
-    _ensure_nginx_proxy(service_name, environment.domain, environment.app_port, log_file=log_file)
+    # Nginx proxy (SPA or standard)
+    if has_frontend and frontend_web_root:
+        _ensure_nginx_spa_proxy(service_name, environment.domain, environment.app_port, frontend_web_root, str(static_root) if static_root.is_dir() else None, log_file)
+    else:
+        _ensure_nginx_proxy(service_name, environment.domain, environment.app_port, log_file=log_file)
 
     # Start service
     _restart_service(service_name, log_file)
 
     # Healthcheck
-    health_url = f'https://{environment.domain}{environment.healthcheck_path or "/health"}'
+    healthcheck_path = '/health/' if has_frontend else (environment.healthcheck_path or '/health')
+    health_url = f'https://{environment.domain}{healthcheck_path}'
     _wait_for_http_healthcheck(health_url, log_file)
 
     environment.deploy_path = str(runtime_root)
