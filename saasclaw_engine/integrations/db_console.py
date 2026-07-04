@@ -104,7 +104,7 @@ def db_tables(request, slug, env):
 
             tables = []
             for r in rows:
-                cur.execute("SELECT count(*) FROM %s" % r[0])
+                cur.execute('SELECT count(*) FROM "%s"' % r[0])
                 count = cur.fetchone()[0]
                 tables.append({
                     'name': r[0],
@@ -182,10 +182,10 @@ def db_table_detail(request, slug, env, table):
                 if safe_order:
                     order_clause = f"ORDER BY {safe_order}"
 
-            cur.execute(f"SELECT count(*) FROM {safe_table}")
+            cur.execute(f'SELECT count(*) FROM "{safe_table}"')
             total = cur.fetchone()[0]
 
-            cur.execute(f"SELECT * FROM {safe_table} {order_clause} LIMIT %s OFFSET %s", (limit, offset))
+            cur.execute(f'SELECT * FROM "{safe_table}" {order_clause} LIMIT %s OFFSET %s', (limit, offset))
             rows = cur.fetchall()
             col_names = [desc[0] for desc in cur.description]
 
