@@ -95,9 +95,23 @@ def _sync_repositories(installation: GitHubInstallation, repos_payload: list):
 def github_setup(request):
     # Only show the current user's installations
     installations = request.user.github_installations.order_by('account_name', 'installation_id')
+    # Fetch app slug for install URL
+    github_app_slug = settings.GITHUB_APP_ID
+    try:
+        from saasclaw_engine.integrations.github import build_github_app_jwt
+        import requests as _req
+        r = _req.get('https://api.github.com/app',
+            headers={'Authorization': f'Bearer {build_github_app_jwt()}', 'Accept': 'application/vnd.github+json'},
+            timeout=10)
+        if r.ok:
+            github_app_slug = r.json().get('slug', settings.GITHUB_APP_ID)
+    except Exception:
+        pass
+
     return render(request, 'app/github_setup.html', {
         'installations': installations,
         'github_app_id': settings.GITHUB_APP_ID,
+        'github_app_slug': github_app_slug,
         'github_app_configured': bool(
             settings.GITHUB_APP_ID
             and (settings.GITHUB_APP_PRIVATE_KEY or settings.GITHUB_APP_PRIVATE_KEY_PATH)

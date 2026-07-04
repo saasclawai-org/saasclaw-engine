@@ -60,41 +60,38 @@ def create_installation_access_token(installation_id: int) -> str:
 
 
 def create_repo_for_installation(installation_id: int, repo_name: str, owner: str, private: bool = True, description: str = '') -> dict:
+    """Create a repository using the GitHub App installation token."""
     token = create_installation_access_token(installation_id)
+    headers = {
+        'Authorization': f'token {token}',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+    }
+    payload = {
+        'name': repo_name,
+        'private': private,
+        'description': description or '',
+    }
+
+    # Try org endpoint first
     response = requests.post(
         f'https://api.github.com/orgs/{owner}/repos',
-        headers={
-            'Authorization': f'token {token}',
-            'Accept': 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28',
-        },
-        json={
-            'name': repo_name,
-            'private': private,
-            'description': description,
-            'auto_init': True,
-        },
-        timeout=30,
+        headers=headers, json=payload, timeout=30,
     )
-    if response.status_code == 404:
-        response = requests.post(
-            'https://api.github.com/user/repos',
-            headers={
-                'Authorization': f'token {token}',
-                'Accept': 'application/vnd.github+json',
-                'X-GitHub-Api-Version': '2022-11-28',
-            },
-            json={
-                'name': repo_name,
-                'private': private,
-                'description': description,
-                'auto_init': True,
-            },
-            timeout=30,
-        )
+    if response.status_code == 201:
+        return response.json()
+
+    # For user installations, try /user/repos
+    response = requests.post(
+        'https://api.github.com/user/repos',
+        headers=headers, json=payload, timeout=30,
+    )
+    if response.status_code == 201:
+        return response.json()
+
+    # Raise with details
     response.raise_for_status()
     return response.json()
-
 
 def _git_error_message(action: str, owner: str, repo_name: str, exc: subprocess.CalledProcessError) -> str:
     detail = (exc.stderr or exc.stdout or '').strip()
@@ -116,7 +113,7 @@ def _git_auth_args(token: str) -> list[str]:
 
 def clone_or_update_repo(installation_id: int, owner: str, repo_name: str, branch: str, destination: str) -> str:
     token = create_installation_access_token(installation_id)
-    repo_url = _github_repo_url(owner, repo_name)
+    repo_url = f'https://github.com/{owner}/{repo_name}.git'
     dest = Path(destination)
     dest.parent.mkdir(parents=True, exist_ok=True)
     if not dest.exists():
@@ -157,7 +154,7 @@ def clone_or_update_repo(installation_id: int, owner: str, repo_name: str, branc
 
 def commit_and_push_repo(installation_id: int, owner: str, repo_name: str, branch: str, repo_path: str, message: str) -> None:
     token = create_installation_access_token(installation_id)
-    repo_url = _github_repo_url(owner, repo_name)
+    repo_url = f'https://github.com/{owner}/{repo_name}.git'
     try:
         subprocess.run(['git', '-C', repo_path, 'config', 'user.name', 'SaaSClaw'], check=True, capture_output=True, text=True)
         subprocess.run(['git', '-C', repo_path, 'config', 'user.email', 'bot@saasclaw.ai'], check=True, capture_output=True, text=True)
