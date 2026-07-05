@@ -68,6 +68,7 @@ class Project(models.Model):
     context_cache = models.TextField(blank=True, help_text='Cached project context for wizard')
     context_cache_updated_at = models.DateTimeField(null=True, blank=True)
     form_api_key = models.CharField(max_length=64, blank=True, editable=False, help_text='API key for public form submissions')
+    company_directory_enabled = models.BooleanField(default=False, help_text='When true, wizard has access to Company Directory API data for this project')
     risk_tier = models.CharField(max_length=10, choices=RiskTier.choices, default=RiskTier.LOW)
     last_deployed_at = models.DateTimeField(null=True, blank=True)
     show_as_demo = models.BooleanField(default=False, help_text='Show on the public demos page')
