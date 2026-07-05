@@ -703,7 +703,7 @@ def _scan_codebase_context(workspace_path: str) -> str:
         hints.append("- src/hooks/ → custom React hooks (useGameState, usePlayer, etc.)")
         hints.append("- src/types/ → shared TypeScript interfaces and types")
         hints.append("")
-        # Database guidance depends on framework: Next.js SSR → Prisma, Static React → Forms API
+        # Database guidance depends on framework: Next.js SSR → Prisma, .NET → EF Core, Static React → Forms API
         if any("Next.js" in h for h in hints):
             hints.append("Database (Prisma + PostgreSQL):")
             hints.append("- PostgreSQL available. Use Prisma ORM — schema at prisma/schema.prisma.")
@@ -712,6 +712,13 @@ def _scan_codebase_context(workspace_path: str) -> str:
             hints.append("- Migrations: npx prisma migrate dev --name <name>")
             hints.append("- Server components: import prisma from @/lib/db directly")
             hints.append("- Client components: create app/api/ routes that use prisma client")
+        elif any(".NET" in h for h in hints):
+            hints.append("Database (.NET EF Core + PostgreSQL):")
+            hints.append("- PostgreSQL auto-provisioned per project. ConnectionStrings__DefaultConnection is injected at deploy time.")
+            hints.append("- Add DbSets in AppDbContext.cs; use EnsureCreated() for auto-migration on startup.")
+            hints.append("- Minimal API endpoints in Program.cs for CRUD operations.")
+            hints.append("- For React+Vite frontend: build outputDir must be '../wwwroot' so .NET serves static files.")
+            hints.append("- Do NOT use Forms API or Django for data persistence — use the .NET API with EF Core.")
         else:
             hints.append("Platform data persistence (IMPORTANT):")
             hints.append("- Static/SPA projects use the built-in Forms API for data persistence — no custom backend needed.")
@@ -937,7 +944,9 @@ def _scan_codebase_context(workspace_path: str) -> str:
             project_type = "Hugo"
         elif "package.json" in top_files:
             project_type = "Node.js"
-    if "manage.py" in top_files:
+    if any(fname.endswith('.csproj') for fname in top_files):
+        project_type = ".NET"
+    elif "manage.py" in top_files:
         project_type = "Django"
     elif "app.py" in top_files:
         project_type = "Flask"
