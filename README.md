@@ -368,6 +368,44 @@ sudo crontab -e
 
 ---
 
+## AI Wizard (OpenClaw Gateway)
+
+The wizard chat interface requires **[OpenClaw](https://github.com/openclaw/openclaw)** installed as a local LLM gateway. This is a separate dependency from the Python engine — it handles model routing, session management, and provides a chat completions API that the Django app consumes.
+
+### Install OpenClaw
+
+```bash
+npm install -g openclaw
+```
+
+### Quick Setup
+
+1. Create a wizard config at `~/.openclaw/openclaw-wizard.json` (see [docs/WIZARD-GATEWAY.md](docs/WIZARD-GATEWAY.md) for full config reference):
+   ```json
+   {
+     "gateway": {
+       "mode": "local",
+       "port": 18790,
+       "bind": "loopback",
+       "auth": { "mode": "none" }
+     }
+   }
+   ```
+2. Create state directory: `mkdir -p ~/.openclaw-wizard-state`
+3. Start the gateway:
+   ```bash
+   OPENCLAW_CONFIG_PATH=~/.openclaw/openclaw-wizard.json \
+     OPENCLAW_STATE_DIR=~/.openclaw-wizard-state \
+     openclaw gateway --port 18790
+   ```
+4. Verify: `curl -s http://127.0.0.1:18790/v1/models`
+
+The Django app connects to the wizard at `http://127.0.0.1:18790/v1` by default (configurable via `STUDIO_LOCAL_URL` setting).
+
+> **Full guide:** See [docs/WIZARD-GATEWAY.md](docs/WIZARD-GATEWAY.md) for the complete setup including systemd service, multi-provider config, LLM Gateway mode, and troubleshooting.
+
+---
+
 ## GitHub App Integration
 
 The engine connects to **users' own GitHub repos** via a [GitHub App](https://docs.github.com/en/developers/apps). Each user installs the app on their own account or org, and the engine gets scoped access to only their repos.
@@ -455,6 +493,7 @@ Before users can install your app, GitHub needs to successfully deliver a `ping`
 | Node.js | 18+ | Via fnm (auto-detected per project for Vite/Next.js builds) |
 | Let's Encrypt | | certs at `/etc/letsencrypt/live/` |
 | `.NET` SDK | 9+ | Optional — auto-installed on demand for .NET projects |
+| OpenClaw | latest | `npm install -g openclaw` (required for AI wizard — see [AI Wizard](#ai-wizard-openclaw-gateway)) |
 
 ## Engine API
 
