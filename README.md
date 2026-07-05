@@ -144,6 +144,60 @@ celery -A myapp beat -l info
 
 ---
 
+### 8. AI Wizard — OpenClaw Gateway (optional)
+
+The wizard (AI chat interface where users describe what they want built) needs an LLM backend. There are two options:
+
+| Option | Backend | How it works |
+|--------|---------|-------------|
+| **OpenClaw Gateway** (recommended) | Direct LLM API via OpenClaw | Chat completions → OpenClaw → LLM provider. More flexible, multi-provider, hot-reloadable config. |
+| **Pi RPC** (legacy) | Pi Bridge subprocess | Django spawns a Pi RPC agent per request. Simpler but single-provider, no live config changes. |
+
+#### Option A: OpenClaw Gateway (recommended)
+
+Install and start a local OpenClaw gateway:
+
+```bash
+npm install -g openclaw
+mkdir -p ~/.openclaw-wizard-state
+cat > ~/.openclaw/openclaw-wizard.json << 'EOF'
+{
+  "gateway": {
+    "mode": "local",
+    "port": 18790,
+    "bind": "loopback",
+    "auth": { "mode": "none" }
+  }
+}
+EOF
+
+OPENCLAW_CONFIG_PATH=~/.openclaw/openclaw-wizard.json \
+  OPENCLAW_STATE_DIR=~/.openclaw-wizard-state \
+  openclaw gateway --port 18790
+```
+
+Verify it's running:
+```bash
+curl -s http://127.0.0.1:18790/v1/models
+```
+
+The Django app connects to it at `http://127.0.0.1:18790/v1` by default. No extra Django settings needed — the engine detects the gateway automatically.
+
+> **Full guide:** See [docs/WIZARD-GATEWAY.md](docs/WIZARD-GATEWAY.md) for systemd service setup, multi-provider config, LLM Gateway mode (force local LLM), and troubleshooting.
+
+#### Option B: Pi RPC (legacy, no external dependency)
+
+If you don't install OpenClaw, the wizard falls back to the built-in Pi RPC agent. It spawns a Pi subprocess per wizard request and connects directly to an LLM provider.
+
+To use Pi RPC, set in Django settings:
+```python
+STUDIO_LOCAL_URL = ''  # Empty or unset disables OpenClaw gateway
+```
+
+> Pi RPC is simpler but limited to a single provider and requires a running Pi RPC server. Most users should prefer the OpenClaw gateway.
+
+---
+
 ## Production Deployment
 
 ### Systemd Services
