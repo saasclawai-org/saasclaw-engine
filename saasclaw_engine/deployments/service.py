@@ -194,12 +194,13 @@ def _refresh_repo_checkout_for_deploy(project: Project, repo_path: Path, log_fil
         elif is_github:
             logger.warning('GitHub repo missing owner/repo for project %s, converting to SSH', project.slug)
 
-        # If remote uses expired token, convert to SSH
+        # If remote uses expired token or plain HTTPS, convert to SSH
         try:
             import subprocess as _sp2
             url_result = _sp2.run(['git', 'remote', 'get-url', 'origin'], cwd=str(repo_path), capture_output=True, text=True, timeout=5)
-            if 'x-access-token' in url_result.stdout:
-                m = re.search(r'github\.com[:/](.+?)(?:\.git)?$', url_result.stdout.strip())
+            remote_url = url_result.stdout.strip()
+            if 'x-access-token' in remote_url or remote_url.startswith('https://github.com/'):
+                m = re.search(r'github\.com[:/](.+?)(?:\.git)?$', remote_url)
                 if m:
                     ssh_url = f'git@github.com:{m.group(1)}.git'
                     _run_command(f'git remote set-url origin {ssh_url}', repo_path, log_file)
@@ -1685,12 +1686,12 @@ def _push_to_github_after_deploy(project: Project, triggered_by=None) -> None:
 
     User = get_user_model()
     # Try triggered_by user first, then project owner
-    user = triggered_by if triggered_by and hasattr(triggered_by, '_state') else project.user
+    user = triggered_by if triggered_by and hasattr(triggered_by, '_state') else project.owner
     if not user:
         return
     social = SocialAccount.objects.filter(user=user, provider='github').first()
-    if not social and project.user and project.user != user:
-        social = SocialAccount.objects.filter(user=project.user, provider='github').first()
+    if not social and project.owner and project.owner != user:
+        social = SocialAccount.objects.filter(user=project.owner, provider='github').first()
     if not social:
         return
     token_obj = SocialToken.objects.filter(account=social).first()
