@@ -23,6 +23,20 @@ Status: Planning — no changes until each item is approved
 - OpenClaw wizard config
 - Nginx setup
 
+## Critical Requirements
+
+### Project Isolation
+- [ ] Wizard agent must be scoped to its project workspace (cwd + file access)
+- [ ] No access to other projects' files, system files, or SaaSClaw app/engine code
+- [ ] Options: per-session workspace scoping via gateway config, or bwrap isolation
+
+### Deploy & Server Inspection
+- [ ] Wizard agent should be able to inspect its project's deploy status
+- [ ] Read project-specific server/systemd logs (e.g. `journalctl -u saasclaw-{slug}-*`)
+- [ ] Check deploy output, nginx errors, build failures
+- [ ] Visit preview URL to verify changes visually (browser tool)
+- [ ] Needs to be scoped — only THAT project's service, not all SaaSClaw services
+
 ## Refactor Priorities (ordered)
 
 ### Phase 1: Extract shared logic
