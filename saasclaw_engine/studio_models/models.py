@@ -28,6 +28,7 @@ class ProviderKey(models.Model):
     api_key = models.CharField(max_length=500)
     default_model = models.CharField(max_length=100, blank=True, default="")
     is_active = models.BooleanField(default=True)
+    is_platform = models.BooleanField(default=False, help_text="Platform-shared key (e.g. Groq free tier). Users don't see their own.")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -265,6 +266,10 @@ class SiteSettings(models.Model):
     require_training_before_project = models.BooleanField(
         default=False,
         help_text='When enabled, users must pass all required training modules before creating projects.'
+    )
+    allow_personal_keys = models.BooleanField(
+        default=True,
+        help_text='Allow users to add their own LLM provider keys. Disable for enterprise installs where only platform keys are used.'
     )
 
     updated_at = models.DateTimeField(auto_now=True)
