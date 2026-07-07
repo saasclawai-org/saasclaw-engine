@@ -664,6 +664,7 @@ def _scan_codebase_context(workspace_path: str) -> str:
         hints.append("- Models: data representation and relationships only. Custom managers for table-level queries.")
         hints.append("- Tests: mirror app structure (tests/test_models.py, tests/test_views.py, tests/test_services.py).")
         hints.append("- Never import models across apps directly — use service layer methods.")
+        hints.append("- CRITICAL: REST_FRAMEWORK must use AllowAny permissions (not IsAuthenticatedOrReadOnly) for preview apps. If API calls return 401/403, check REST_FRAMEWORK settings in config/settings.py.")
 
         hints.append("Testing:")
         hints.append("- Test command: python manage.py test --settings=config.test_settings")
