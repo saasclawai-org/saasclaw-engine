@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Docker sandbox configuration
 SANDBOX_IMAGE = "saasclaw-sandbox:latest"
-SANDBOX_ENABLED = True  # Set to False to disable Docker sandbox
+SANDBOX_ENABLED = False  # Set to False to disable Docker sandbox
 
 # URL allowlist for web_fetch — only well-known public docs/APIs
 WEB_FETCH_ALLOWED_HOSTS = {
