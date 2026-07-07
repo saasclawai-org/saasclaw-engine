@@ -1193,9 +1193,11 @@ def _deploy_static_environment(project: Project, environment: Environment, deplo
 
     database_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
 
-    # Merge with any existing env vars
+    # Merge repo .env into runtime env (carries JWT keys, API keys, etc.)
+    repo_env_file = repo_path / '.env'
+    repo_env = _load_env_file(repo_env_file) if repo_env_file.exists() else {}
     existing_env = _load_env_file(env_file)
-    env_values = {**existing_env, **{
+    env_values = {**existing_env, **repo_env, **{
         'POSTGRES_DB': db_name,
         'POSTGRES_USER': db_user,
         'POSTGRES_PASSWORD': db_password,
@@ -1473,7 +1475,11 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
     database_url = f'postgresql+psycopg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}'
 
     # Build app settings / env vars
+    # Also merge repo .env for JWT keys, API keys, etc.
+    repo_env_file = repo_path / '.env'
+    repo_env = _load_env_file(repo_env_file) if repo_env_file.exists() else {}
     env_values = dict(existing_env)
+    env_values.update(repo_env)
     env_values.update({
         'ASPNETCORE_ENVIRONMENT': 'Development' if environment.name == 'preview' else 'Production',
         'ASPNETCORE_URLS': f'http://0.0.0.0:{environment.app_port}',
