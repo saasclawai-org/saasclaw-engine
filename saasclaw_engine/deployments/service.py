@@ -648,7 +648,8 @@ def _deploy_django_environment(project: Project, environment: Environment, deplo
 
         # Migrate (auto-create migrations for new apps)
         _run_command(f'bash -lc "set -a && source {env_file} && {venv_path}/bin/python manage.py makemigrations --noinput 2>/dev/null || true"', repo_path, log_file)
-        _run_command(f'bash -lc "set -a && source {env_file} && {venv_path}/bin/python manage.py migrate"', repo_path, log_file)
+        # Use smart migrate that detects rewritten 0001_initial (wizard may modify initial migration)
+        _run_command(f'django-force-migrate {repo_path} {env_file} {venv_path}', repo_path, log_file)
 
         # Admin user
         _ensure_django_admin_user(repo_path, env_file, venv_path, deployment, log_file)
