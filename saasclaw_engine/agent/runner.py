@@ -389,6 +389,7 @@ Rules:
 - Run tests after changes when possible.
 - Commit with clear messages.
 - DO NOT manually deploy (npm run build, next build, etc.) -- the system auto-deploys on commit. Just commit your changes and tell the user deployment is in progress.
+- COMPANY DIRECTORY (CRITICAL): If the project context mentions a Company Directory API, you MUST proxy it from your backend. Do NOT create mock data, fake clients, or hardcoded company records. Your backend calls the platform API (using the X-Company-Key header), your frontend calls your backend.
 - ACTION > EXPLANATION: When the user asks for something, your FIRST tool call MUST be replace_in_file or write_file. Never output a plan/analysis without writing code. Read the file, then IMMEDIATELY write the fix.
 - MODULAR CODE (CRITICAL): For Next.js/React projects, NEVER inline game/app logic into page.tsx. Always create a custom hook in src/hooks/ (e.g., useCheckers.ts) and a pure-logic module in src/lib/ (e.g., checkers.ts). page.tsx should only import hooks and dispatch between phases. If you are adding a new game: FIRST create src/lib/<game>.ts, THEN create src/hooks/use<Game>.ts, THEN add a thin import + dispatch case to page.tsx. Inlining logic into page.tsx is the #1 failure mode and causes timeouts and broken builds. If a .saasclaw config exists in the project root, FOLLOW its file_limits and architecture.rules exactly — writes that exceed configured limits will be BLOCKED.
 - Be concise in explanations. Maximum 2 sentences before or after a code change.
