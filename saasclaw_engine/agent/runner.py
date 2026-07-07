@@ -1687,6 +1687,13 @@ def run_agent(
                 # Auto-continue if model fakes a "tool limit" response (GLM quirk)
                 if "tool limit" in content.lower():
                     logger.info("Model generated fake tool-limit response, showing to user")
+                # Model asks permission without acting -- re-prompt it to proceed
+                if _is_permission_question(content) and round_num == 0:
+                    logger.info("Model asked permission without tool calls, re-prompting to proceed")
+                    new_messages.append({"role": "assistant", "content": content, "tool_call": {}})
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": "Yes, proceed. Execute the changes now."})
+                    continue
                 new_messages.append({"role": "assistant", "content": content, "tool_call": {}})
             else:
                 new_messages.append({
