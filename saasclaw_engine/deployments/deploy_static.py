@@ -4,6 +4,7 @@ Handles Hugo, plain HTML, React SPA, and other static builds.
 """
 import logging
 import os
+import secrets
 from pathlib import Path
 
 from django.conf import settings

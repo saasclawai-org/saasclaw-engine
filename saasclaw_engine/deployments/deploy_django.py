@@ -6,6 +6,7 @@ Django/Flask/FastAPI projects.
 import json
 import logging
 import os
+import secrets as _secrets
 import subprocess
 from pathlib import Path
 
