@@ -1400,6 +1400,8 @@ def _ensure_dotnet_sdk(log_file: Path) -> str:
     """Ensure .NET SDK is installed. Returns the dotnet binary path."""
     import shutil as _shutil
     dotnet = _shutil.which("dotnet")
+    ef_tool = "/usr/local/bin/dotnet-ef"
+    ef_env = {"DOTNET_ROOT": "/usr/local/share/dotnet"}
     if dotnet:
         with log_file.open('a', encoding='utf-8') as h:
             h.write(f'Using existing .NET SDK: {dotnet}\n')
@@ -1538,6 +1540,45 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
     _run_command(f'{dotnet} restore', repo_path, log_file)
     publish_dir.mkdir(parents=True, exist_ok=True)
     _run_command(f'{dotnet} publish -c Release -o {publish_dir}', repo_path, log_file)
+
+    # Run EF Core migrations if Migrations directory exists or if no EnsureCreated seed
+    migrations_dir = repo_path / 'Migrations'
+    db_conn = env_values.get('ConnectionStrings__DefaultConnection', '')
+    ef_env = {"DOTNET_ROOT": "/usr/local/share/dotnet"}
+    if db_conn:
+        ef_env["DOTNET_CONNECTION_STRING"] = db_conn
+
+    if not migrations_dir.is_dir():
+        # Generate initial migration
+        try:
+            _run_command(
+                f'{ef_tool} migrations add InitialCreate --output-dir Migrations --context AppDbContext',
+                repo_path, log_file, env=ef_env,
+            )
+            _run_command(f'sudo -u saasclaw git -c user.email="deploy@saasclaw.ai" -c user.name="deploy" add Migrations/ {migrations_dir}/*.cs', repo_path, log_file)
+            _run_command(f'sudo -u saasclaw git -c user.email="deploy@saasclaw.ai" -c user.name="deploy" commit -m "auto: add EF migrations"', repo_path, log_file)
+            _run_command(f'sudo GIT_SSH_COMMAND="ssh -i /home/nmoore/.ssh/id_ed25519_github_personal" -u saasclaw git push origin main', repo_path, log_file)
+        except RuntimeError as e:
+            log_file.write(f'WARNING: Could not generate initial EF migration: {e}\n')
+            log_file.flush()
+    else:
+        # Diff model against last migration and create a new one if needed
+        try:
+            _run_command(
+                f'{ef_tool} migrations add AutoMigrate --output-dir Migrations --context AppDbContext',
+                repo_path, log_file, env=ef_env,
+            )
+            _run_command(f'sudo -u saasclaw git -c user.email="deploy@saasclaw.ai" -c user.name="deploy" add Migrations/', repo_path, log_file)
+            _run_command(f'sudo -u saasclaw git -c user.email="deploy@saasclaw.ai" -c user.name="deploy" commit -m "auto: update EF migrations"', repo_path, log_file)
+            _run_command(f'sudo GIT_SSH_COMMAND="ssh -i /home/nmoore/.ssh/id_ed25519_github_personal" -u saasclaw git push origin main', repo_path, log_file)
+        except RuntimeError:
+            pass  # No model changes — expected on most deploys
+
+    # Apply all pending migrations
+    _run_command(
+        f'{ef_tool} database update --context AppDbContext',
+        publish_dir, log_file, env=ef_env,
+    )
 
     # Normalize ownership of published output
     _normalize_ownership(publish_dir, log_file)
