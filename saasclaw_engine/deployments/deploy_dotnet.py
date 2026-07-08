@@ -73,6 +73,86 @@ def _detect_dotnet_entrypoint(repo_path: Path, project_slug: str) -> str:
 
 
 
+def _reconcile_ef_migrations(repo_path: Path, db_conn: str, log_file: Path, env: dict | None = None) -> None:
+    """Reconcile EF migration history with existing database tables.
+
+    If the database has tables but __EFMigrationsHistory is empty, the tables
+    were likely created by EnsureCreated() or direct SQL. In that case, we
+    need to insert migration records for all existing migrations so EF knows
+    they've already been applied, preventing "relation already exists" errors.
+    """
+    if not db_conn:
+        return
+
+    migrations_dir = repo_path / 'Migrations'
+    if not migrations_dir.is_dir():
+        return
+
+    try:
+        # Connect directly to the project's database using psycopg
+        # (Django's default connection points to the SaaSClaw main DB, not
+        # the project's DB)
+        import psycopg
+        conn = psycopg.connect(db_conn, autocommit=True)
+        cur = conn.cursor()
+
+        # Check if __EFMigrationsHistory has records
+        cur.execute('SELECT COUNT(*) FROM "__EFMigrationsHistory"')
+        count = cur.fetchone()[0]
+
+        if count > 0:
+            cur.close()
+            conn.close()
+            return
+
+        # Check if any user tables exist
+        cur.execute("""
+            SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name NOT IN ('__EFMigrationsHistory', '__EFMigrationsHistoryLock')
+        """)
+        table_count = cur.fetchone()[0]
+
+        if table_count == 0:
+            cur.close()
+            conn.close()
+            return
+
+        # Tables exist but no migration history — seed migration records
+        migrations = []
+        for f in sorted(migrations_dir.glob('*.cs')):
+            if 'Designer' in f.name or 'Snapshot' in f.name:
+                continue
+            migrations.append(f.name.replace('.cs', ''))
+
+        # Determine EF version from snapshot
+        ef_version = '9.0.0'
+        snapshot = migrations_dir / 'AppDbContextModelSnapshot.cs'
+        if snapshot.exists():
+            import re
+            content = snapshot.read_text(errors='ignore')
+            match = re.search(r'ProductVersion.*?"([^"]+)"', content)
+            if match:
+                ef_version = match.group(1)
+
+        for migration_id in migrations:
+            log_file.write(f'Inserting migration record: {migration_id}\n')
+            log_file.flush()
+            cur.execute(
+                'INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion") VALUES (%s, %s) ON CONFLICT DO NOTHING',
+                (migration_id, ef_version)
+            )
+
+        log_file.write(f'Reconciled {len(migrations)} EF migration records\n')
+        log_file.flush()
+        cur.close()
+        conn.close()
+
+    except Exception as exc:
+        log_file.write(f'WARNING: Could not reconcile EF migrations: {exc}\n')
+        log_file.flush()
+
+
 def _deploy_dotnet_environment(project: Project, environment: Environment, deployment: Deployment, repo_path: Path, log_file: Path) -> None:
     """Deploy a .NET app to an environment."""
     _ensure_app_port(environment)
@@ -212,6 +292,13 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
             pass  # No model changes — expected on most deploys
 
     # Apply all pending migrations (run from repo_path where .csproj lives)
+    #
+    # Edge case: if tables already exist (e.g. from EnsureCreated) but
+    # __EFMigrationsHistory is empty, we need to mark existing migrations
+    # as already applied before running database update, otherwise EF tries
+    # to re-create tables and fails with "relation already exists".
+    _reconcile_ef_migrations(repo_path, db_conn, log_file, env=ef_env)
+
     _run_command(
         f'{ef_tool} database update --context AppDbContext --project {repo_path}',
         publish_dir, log_file, env=ef_env,
