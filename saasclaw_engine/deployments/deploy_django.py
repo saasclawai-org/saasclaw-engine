@@ -3,12 +3,15 @@
 Detects Python/WSGI entrypoints, configures venv, migrates, and deploys
 Django/Flask/FastAPI projects.
 """
+from __future__ import annotations
+
 import json
 import logging
 import os
 import secrets as _secrets
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from django.conf import settings
 
@@ -19,6 +22,10 @@ from .deploy_infra import (
     _ensure_systemd_service, _ensure_nginx_spa_proxy,
     _restart_service, _ensure_django_admin_user,
 )
+
+if TYPE_CHECKING:
+    from saasclaw_engine.projects.models import Project
+    from saasclaw_engine.deployments.models import Deployment, Environment
 
 logger = logging.getLogger(__name__)
 

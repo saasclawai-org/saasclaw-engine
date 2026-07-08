@@ -645,7 +645,9 @@ def _deploy_project_tool(workspace_path: str, environment: str = "preview") -> s
             web_root = f"/srv/saasclaw/projects/{project.slug}/runtime/{environment}/web"
             results.append(f"🌐 Deploying files to {web_root}...")
             try:
+                import os as _os
                 import shutil as _shutil
+                import os as _os
                 _os.makedirs(web_root, exist_ok=True)
                 src_dist = _os.path.join(workspace_path, dist_dir)
                 # Clear old contents
@@ -1236,8 +1238,8 @@ def _project_status_tool(workspace_path, section=""):
     if "all" in sections:
         parts.append("=== Project Info ===")
         parts.append(f"  Slug: {slug}")
-        parts.append(f"  Runtime: {project.runtime or "unknown"}")
-        parts.append(f"  Preview: {project.preview_domain or "not set"}")
+        parts.append(f"  Runtime: {project.runtime or 'unknown'}")
+        parts.append(f"  Preview: {project.preview_domain or 'not set'}")
         if project.form_api_key:
             parts.append(f"  Form API key: {project.form_api_key[:12]}***")
         else:

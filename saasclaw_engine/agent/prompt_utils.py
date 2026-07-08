@@ -5,6 +5,8 @@ import os
 
 from django.conf import settings
 
+from .context_scan import _scan_codebase_context, _scan_project_files
+
 logger = logging.getLogger(__name__)
 
 

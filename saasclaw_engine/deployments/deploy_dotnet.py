@@ -2,11 +2,14 @@
 
 Handles .NET/ASP.NET Core project detection, SDK installation, and deployment.
 """
+from __future__ import annotations
+
 import json
 import logging
 import os
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from django.conf import settings
 
@@ -16,6 +19,10 @@ from .deploy_infra import (
     _ensure_systemd_service, _ensure_nginx_proxy, _ensure_nginx_spa_proxy,
     _ensure_postgres_database, _wait_for_http_healthcheck, _restart_service,
 )
+
+if TYPE_CHECKING:
+    from saasclaw_engine.projects.models import Project
+    from saasclaw_engine.deployments.models import Deployment, Environment
 
 logger = logging.getLogger(__name__)
 

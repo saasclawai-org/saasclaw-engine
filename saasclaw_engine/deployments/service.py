@@ -227,7 +227,7 @@ def decommission_project(project_slug: str, project_name: str = '') -> None:
     lines = [f'\n{"="*60}']
     lines.append(f'DECOMMISSION: {project_name or project_slug} (slug={project_slug})')
     lines.append(f'Timestamp: {timestamp}')
-    lines.append(f'{'-'*60}')
+    lines.append('-' * 60)
 
     # Services
     service_names = [f'saasclaw-{project_slug}-preview', f'saasclaw-{project_slug}-production']

@@ -2,10 +2,13 @@
 
 Handles Hugo, plain HTML, React SPA, and other static builds.
 """
+from __future__ import annotations
+
 import logging
 import os
 import secrets
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from django.conf import settings
 
@@ -15,6 +18,10 @@ from .deploy_infra import (
     _ensure_postgres_database, _pick_ssl_certs,
 )
 from .deploy_node import _detect_node_version, _node_binary_path
+
+if TYPE_CHECKING:
+    from saasclaw_engine.projects.models import Project
+    from saasclaw_engine.deployments.models import Deployment, Environment
 
 logger = logging.getLogger(__name__)
 
