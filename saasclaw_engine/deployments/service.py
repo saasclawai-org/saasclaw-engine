@@ -1457,6 +1457,7 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
 
     # Ensure .NET SDK
     dotnet = _ensure_dotnet_sdk(log_file)
+    ef_tool = "/usr/local/bin/dotnet-ef"
 
     # Provision PostgreSQL database
     env_suffix = f'_{environment.name}' if environment.name != 'preview' else ''
