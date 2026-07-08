@@ -575,7 +575,7 @@ decommission_project(project_slug, project_name)
 ### Agent System
 
 ```python
-from saasclaw_engine.agent.pi_bridge import PiBridge
+from saasclaw_engine.agent.runner import run_agent
 from saasclaw_engine.studio_models.models import AgentSession
 
 session = AgentSession.objects.create(
@@ -585,8 +585,7 @@ session = AgentSession.objects.create(
     model='glm-5.2',
 )
 
-bridge = PiBridge(project=project, session=session)
-result = bridge.run("Build me a Django REST API with user auth")
+result = run_agent(session, "Build me a Django REST API with user auth")
 ```
 
 ### GitHub Integration
