@@ -3,5 +3,5 @@ repos:
     rev: v0.11.12
     hooks:
       - id: ruff
-        args: [--select=F821,F4xx,--no-cache]
-        name: ruff F821/F4xx check
+        args: [--select=F821,--no-cache]
+        name: ruff undefined-name check

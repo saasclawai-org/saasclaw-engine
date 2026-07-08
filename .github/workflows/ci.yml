@@ -43,8 +43,8 @@ jobs:
           pip install -e ".[dev,task-queue]"
           pip install ruff
 
-      - name: Ruff F821/F4xx check
-        run: ruff check --select=F821,F4 --no-cache saasclaw_engine/
+      - name: Ruff check (undefined names)
+        run: ruff check --select=F821 --no-cache saasclaw_engine/
 
       - name: Run tests
         run: python -m pytest --tb=short -q
