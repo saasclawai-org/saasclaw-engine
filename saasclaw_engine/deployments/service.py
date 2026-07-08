@@ -1548,12 +1548,13 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
     ef_env = {"DOTNET_ROOT": "/usr/local/share/dotnet"}
     if db_conn:
         ef_env["DOTNET_CONNECTION_STRING"] = db_conn
+        ef_env["ConnectionStrings__DefaultConnection"] = db_conn
 
     if not migrations_dir.is_dir():
         # Generate initial migration
         try:
             _run_command(
-                f'{ef_tool} migrations add InitialCreate --output-dir Migrations --context AppDbContext',
+                f'{ef_tool} migrations add InitialCreate --output-dir Migrations --context AppDbContext --project {repo_path}',
                 repo_path, log_file, env=ef_env,
             )
             _run_command(f'sudo -u saasclaw git -c user.email="deploy@saasclaw.ai" -c user.name="deploy" add Migrations/ {migrations_dir}/*.cs', repo_path, log_file)
@@ -1566,7 +1567,7 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
         # Diff model against last migration and create a new one if needed
         try:
             _run_command(
-                f'{ef_tool} migrations add AutoMigrate --output-dir Migrations --context AppDbContext',
+                f'{ef_tool} migrations add AutoMigrate --output-dir Migrations --context AppDbContext --project {repo_path}',
                 repo_path, log_file, env=ef_env,
             )
             _run_command(f'sudo -u saasclaw git -c user.email="deploy@saasclaw.ai" -c user.name="deploy" add Migrations/', repo_path, log_file)
@@ -1575,9 +1576,9 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
         except RuntimeError:
             pass  # No model changes — expected on most deploys
 
-    # Apply all pending migrations
+    # Apply all pending migrations (run from repo_path where .csproj lives)
     _run_command(
-        f'{ef_tool} database update --context AppDbContext',
+        f'{ef_tool} database update --context AppDbContext --project {repo_path}',
         publish_dir, log_file, env=ef_env,
     )
 
