@@ -1564,10 +1564,13 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
             log_file.write(f'WARNING: Could not generate initial EF migration: {e}\n')
             log_file.flush()
     else:
-        # Diff model against last migration and create a new one if needed
+        # Check if there are pending model changes needing a new migration
+        # Use a unique name to avoid collision with existing migrations
+        import time
+        migration_name = f"AutoMigrate{int(time.time())}"
         try:
             _run_command(
-                f'{ef_tool} migrations add AutoMigrate --output-dir Migrations --context AppDbContext --project {repo_path}',
+                f'{ef_tool} migrations add {migration_name} --output-dir Migrations --context AppDbContext --project {repo_path}',
                 repo_path, log_file, env=ef_env,
             )
             _run_command(f'sudo -u saasclaw git -c user.email="deploy@saasclaw.ai" -c user.name="deploy" add Migrations/', repo_path, log_file)
