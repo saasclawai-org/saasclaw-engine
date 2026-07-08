@@ -89,11 +89,24 @@ def _reconcile_ef_migrations(repo_path: Path, db_conn: str, log_file: Path, env:
         return
 
     try:
-        # Connect directly to the project's database using psycopg
-        # (Django's default connection points to the SaaSClaw main DB, not
-        # the project's DB)
+        # Connect directly to the project's database using psycopg.
+        # The connection string from .env may be in .NET format
+        # (Host=...;Database=...;) — convert to libpq format if needed.
         import psycopg
-        conn = psycopg.connect(db_conn, autocommit=True)
+        conn_str = db_conn
+        if conn_str and not conn_str.startswith('postgres'):
+            # Convert .NET-style connection string to libpq format
+            # e.g. "Host=localhost;Database=mydb;Username=user;Password=pass"
+            # → "host=localhost dbname=mydb user=user password=pass"
+            parts = dict(p.split('=', 1) for p in conn_str.split(';') if '=' in p)
+            host = parts.get('Host', parts.get('Server', 'localhost'))
+            port = parts.get('Port', '5432')
+            dbname = parts.get('Database', parts.get('Database', ''))
+            user = parts.get('Username', parts.get('User Id', ''))
+            password = parts.get('Password', '')
+            conn_str = f'host={host} port={port} dbname={dbname} user={user} password={password}'
+
+        conn = psycopg.connect(conn_str, autocommit=True)
         cur = conn.cursor()
 
         # Check if __EFMigrationsHistory has records
@@ -135,22 +148,21 @@ def _reconcile_ef_migrations(repo_path: Path, db_conn: str, log_file: Path, env:
             if match:
                 ef_version = match.group(1)
 
-        for migration_id in migrations:
-            log_file.write(f'Inserting migration record: {migration_id}\n')
-            log_file.flush()
-            cur.execute(
-                'INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion") VALUES (%s, %s) ON CONFLICT DO NOTHING',
-                (migration_id, ef_version)
-            )
+        with log_file.open('a', encoding='utf-8') as handle:
+            for migration_id in migrations:
+                handle.write(f'Inserting migration record: {migration_id}\n')
+                cur.execute(
+                    'INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion") VALUES (%s, %s) ON CONFLICT DO NOTHING',
+                    (migration_id, ef_version)
+                )
+            handle.write(f'Reconciled {len(migrations)} EF migration records\n')
 
-        log_file.write(f'Reconciled {len(migrations)} EF migration records\n')
-        log_file.flush()
         cur.close()
         conn.close()
 
     except Exception as exc:
-        log_file.write(f'WARNING: Could not reconcile EF migrations: {exc}\n')
-        log_file.flush()
+        with log_file.open('a', encoding='utf-8') as handle:
+            handle.write(f'WARNING: Could not reconcile EF migrations: {exc}\n')
 
 
 def _deploy_dotnet_environment(project: Project, environment: Environment, deployment: Deployment, repo_path: Path, log_file: Path) -> None:
