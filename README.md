@@ -8,7 +8,7 @@ SaaSClaw Engine is the backend that powers [SaaSClaw](https://saasclaw.ai). It p
 
 ## What It Does
 
-- **AI Agent** — Run LLM-powered agents (via Pi RPC or direct API) with tools for file I/O, shell commands, git, web search, and todo tracking
+- **AI Agent** — Run LLM-powered agents via OpenClaw Gateway with tools for file I/O, shell commands, git, web search, and todo tracking
 - **Deploy Pipeline** — Build and deploy projects to preview and production environments with automatic nginx config, SSL, health checks, and rollback
 - **GitHub Integration** — Clone, commit, and push to user repos via a GitHub App (JWT auth + installation tokens)
 - **Task Queue** — Async Celery workers for long-running deploy jobs
@@ -17,7 +17,8 @@ SaaSClaw Engine is the backend that powers [SaaSClaw](https://saasclaw.ai). It p
 - **Secret Scanning** — Deploy pipeline detects AWS keys, GitHub tokens, private keys, and other secrets in committed code
 - **Dependency Scanning** — Automated vulnerability scanning (`npm audit`, `pip check`) during deploy
 - **Decommissioning** — Safe project decommissioning with systemd cleanup, nginx removal, and audit logging
-- **Staging Support** — Configurable preview domains for staging isolation (`PREVIEW_BASE_DOMAIN`)
+- **Per-Project Databases** — Auto-provisioned PostgreSQL databases for each deployed project
+- **Form API** — Static sites can submit form data via a secure API endpoint (no backend needed)
 
 ## Install
 
@@ -132,8 +133,11 @@ urlpatterns = [
 ### 7. Run it
 
 ```bash
-# Web
-gunicorn myapp.wsgi:application --bind 127.0.0.1:8000 --workers 4
+# Web server (use gevent workers for SSE streaming)
+gunicorn myapp.wsgi:application \
+    --bind 127.0.0.1:8010 \
+    --worker-class gevent --workers 4 \
+    --timeout 600
 
 # Celery worker (async deploys)
 celery -A myapp worker -l info
@@ -142,67 +146,55 @@ celery -A myapp worker -l info
 celery -A myapp beat -l info
 ```
 
+> **Important:** Use `--worker-class gevent` (not gthread) if your app uses SSE streaming. The gthread worker buffers streaming responses entirely before sending them. Also set `conn_max_age=0` when using gevent — greenlets cannot share DB connections.
+
 ---
 
-### 8. AI Wizard — OpenClaw Gateway (optional)
+## AI Wizard — OpenClaw Gateway
 
-The wizard (AI chat interface where users describe what they want built) needs an LLM backend. There are two options:
+The wizard (AI chat interface where users describe what they want built) requires an [OpenClaw](https://github.com/openclaw/openclaw) gateway for LLM routing.
 
-| Option | Backend | How it works |
-|--------|---------|-------------|
-| **OpenClaw Gateway** (recommended) | Direct LLM API via OpenClaw | Chat completions → OpenClaw → LLM provider. More flexible, multi-provider, hot-reloadable config. |
-| **Pi RPC** (legacy) | Pi Bridge subprocess | Django spawns a Pi RPC agent per request. Simpler but single-provider, no live config changes. |
-
-#### Option A: OpenClaw Gateway (recommended)
-
-Install and start a local OpenClaw gateway:
+### Install OpenClaw
 
 ```bash
 npm install -g openclaw
-mkdir -p ~/.openclaw-wizard-state
-cat > ~/.openclaw/openclaw-wizard.json << 'EOF'
-{
-  "gateway": {
-    "mode": "local",
-    "port": 18790,
-    "bind": "loopback",
-    "auth": { "mode": "none" }
-  }
-}
-EOF
-
-OPENCLAW_CONFIG_PATH=~/.openclaw/openclaw-wizard.json \
-  OPENCLAW_STATE_DIR=~/.openclaw-wizard-state \
-  openclaw gateway --port 18790
 ```
 
-Verify it's running:
-```bash
-curl -s http://127.0.0.1:18790/v1/models
-```
+### Quick Setup
 
-The Django app connects to it at `http://127.0.0.1:18790/v1` by default. No extra Django settings needed — the engine detects the gateway automatically.
+1. Create a wizard config:
+   ```bash
+   mkdir -p ~/.openclaw ~/.openclaw-wizard-state
+   cat > ~/.openclaw/openclaw-wizard.json << 'EOF'
+   {
+     "gateway": {
+       "mode": "local",
+       "port": 18790,
+       "bind": "loopback",
+       "auth": { "mode": "none" }
+     }
+   }
+   EOF
+   ```
 
-> **Full guide:** See [docs/WIZARD-GATEWAY.md](docs/WIZARD-GATEWAY.md) for systemd service setup, multi-provider config, LLM Gateway mode (force local LLM), and troubleshooting.
+2. Start the gateway (or create a systemd service — see [docs/WIZARD-GATEWAY.md](docs/WIZARD-GATEWAY.md)):
+   ```bash
+   OPENCLAW_CONFIG_PATH=~/.openclaw/openclaw-wizard.json \
+     OPENCLAW_STATE_DIR=~/.openclaw-wizard-state \
+     openclaw gateway --port 18790
+   ```
 
-#### Option B: Pi RPC (legacy, no external dependency)
+3. Verify: `curl -s http://127.0.0.1:18790/v1/models`
 
-If you don't install OpenClaw, the wizard falls back to the built-in Pi RPC agent. It spawns a Pi subprocess per wizard request and connects directly to an LLM provider.
+The Django app connects to the wizard at `http://127.0.0.1:18790/v1` by default (configurable via `STUDIO_LOCAL_URL` setting).
 
-To use Pi RPC, set in Django settings:
-```python
-STUDIO_LOCAL_URL = ''  # Empty or unset disables OpenClaw gateway
-```
-
-> Pi RPC is simpler but limited to a single provider and requires a running Pi RPC server. Most users should prefer the OpenClaw gateway.
+> **Full guide:** See [docs/WIZARD-GATEWAY.md](docs/WIZARD-GATEWAY.md) for systemd service setup, multi-provider config, LLM Gateway mode, and troubleshooting.
 
 ---
 
 ## Production Deployment
 
 ### Systemd Services
-
-Create two service files for Gunicorn (web) and Celery (worker). These use your app's virtual environment and environment file.
 
 **`/etc/systemd/system/saasclaw-web.service`:**
 
@@ -217,7 +209,8 @@ Group=saasclaw
 WorkingDirectory=/srv/saasclaw/app
 EnvironmentFile=/srv/saasclaw/app/.env
 ExecStart=/srv/saasclaw/app/.venv/bin/gunicorn config.wsgi:application \
-    --bind 127.0.0.1:8000 --workers 2 --threads 4 \
+    --bind 127.0.0.1:8010 \
+    --worker-class gevent --workers 4 \
     --timeout 600 \
     --access-logfile /srv/saasclaw/logs/gunicorn-access.log \
     --error-logfile /srv/saasclaw/logs/gunicorn-error.log
@@ -259,11 +252,7 @@ sudo systemctl enable saasclaw-web saasclaw-worker
 sudo systemctl start saasclaw-web saasclaw-worker
 ```
 
-> **Important:** After code changes, use `sudo systemctl restart saasclaw-web saasclaw-worker`. For module-level changes (like new Django apps or migrations), do a full stop/start: `sudo systemctl stop saasclaw-web saasclaw-worker && sudo systemctl start saasclaw-web saasclaw-worker`.
-
 ### Nginx Reverse Proxy
-
-The web service listens on `127.0.0.1:8000`. Configure nginx to proxy to it:
 
 ```nginx
 server {
@@ -276,20 +265,19 @@ server {
     include             /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
 
-    # Static files (serve directly)
+    client_max_body_size 25m;
+
     location /static/ {
         alias /srv/saasclaw/app/static/;
         expires 30d;
     }
 
-    # Docs
     location /docs/ {
         alias /srv/saasclaw/app/docs/;
     }
 
-    # All other requests → Gunicorn
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:8010;
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
         proxy_buffering off;
@@ -302,39 +290,6 @@ server {
 }
 ```
 
-### Required Directories
-
-```bash
-sudo mkdir -p /srv/saasclaw/{app,engine,logs}
-sudo useradd -r -d /srv/saasclaw -s /usr/sbin/nologin saasclaw
-sudo chown -R saasclaw:saasclaw /srv/saasclaw
-```
-
-### Environment File
-
-Create `/srv/saasclaw/app/.env` with your settings (see [Configuration](#configuration) above). Key variables:
-
-```env
-SECRET_KEY=your-django-secret-key
-DATABASE_URL=postgres://user:pass@localhost/saasclaw
-CELERY_BROKER_URL=redis://localhost:6379/0
-REDIS_URL=redis://localhost:6379/0
-STUDIO_MODEL=glm-5.2
-ALLOWED_HOSTS=saasclaw.ai,app.saasclaw.ai
-```
-
-### Pi Extension (PII Guard)
-
-The PII Guard Pi extension (`extensions/pii-guard.ts`) calls the same PII Guard service over HTTP, with regex fallback:
-
-```bash
-sudo mkdir -p ~saasclaw/.pi/agent/extensions
-sudo cp /srv/saasclaw/engine/extensions/pii-guard.ts ~saasclaw/.pi/agent/extensions/
-sudo chown -R saasclaw:saasclaw ~saasclaw/.pi
-```
-
-The service must be running (`sudo systemctl start pii-guard`). If it's not, the extension falls back to built-in regex automatically.
-
 ---
 
 ## DNS & SSL
@@ -343,211 +298,108 @@ The deploy pipeline automatically generates nginx configs for each project. It n
 
 ### DNS Records
 
-Assuming your server IP is `203.0.113.50` and your domain is `example.com`, create these records at your DNS provider:
+Assuming your server IP is `203.0.113.50` and your domain is `example.com`:
 
 | Type | Name | Value | Purpose |
 |------|------|-------|---------|
 | A | `@` | `203.0.113.50` | Main app (`example.com`) |
-| A | `preview` | `203.0.113.50` | Preview subdomain (`preview.example.com`) |
-| A | `*` | `203.0.113.50` | Wildcard — catches `*.example.com` (production deploys) and `*.preview.example.com` (preview deploys) |
+| A | `preview` | `203.0.113.50` | Preview subdomain |
+| A | `*` | `203.0.113.50` | Wildcard — catches `*.example.com` and `*.preview.example.com` |
 
-**If using Cloudflare**, set all records to **DNS only** (grey cloud, not orange proxy). The engine generates its own nginx SSL config using Let's Encrypt certs — Cloudflare's proxy would conflict.
+**If using Cloudflare**, set all records to **DNS only** (grey cloud). The engine generates its own nginx SSL config — Cloudflare's proxy would conflict.
 
-> **Wildcard A records** aren't supported by all DNS providers. If yours doesn't support them, add individual A records for each project slug as you create them. The engine can't provision DNS — records must exist before deployment.
+> **Wildcard A records** aren't supported by all DNS providers. If yours doesn't support them, add individual A records for each project slug.
 
 ### SSL Certificates (Let's Encrypt)
 
-The deploy pipeline looks for certs at these paths:
-
-```
-/etc/letsencrypt/live/example.com/fullchain.pem
-/etc/letsencrypt/live/example.com/privkey.pem
-/etc/letsencrypt/live/preview.example.com/fullchain.pem
-/etc/letsencrypt/live/preview.example.com/privkey.pem
-```
-
-It also includes these Let's Encrypt files in every nginx config:
-
-```
-/etc/letsencrypt/options-ssl-nginx.conf
-/etc/letsencrypt/ssl-dhparams.pem
-```
-
-You need **two wildcard certificates**. Request them with certbot:
-
 ```bash
-# Production wildcard — covers example.com and *.example.com
+# Production wildcard
 sudo certbot certonly --manual --preferred-challenges dns \
   -d example.com -d '*.example.com' \
   --agree-tos --email you@example.com
 
-# Preview wildcard — covers preview.example.com and *.preview.example.com
+# Preview wildcard
 sudo certbot certonly --manual --preferred-challenges dns \
   -d preview.example.com -d '*.preview.example.com' \
   --agree-tos --email you@example.com
 ```
 
-**Using Cloudflare DNS?** certbot's Cloudflare plugin can automate the DNS challenge:
+**Using Cloudflare DNS?** certbot's Cloudflare plugin automates the DNS challenge:
 
 ```bash
-# Install the plugin
 pip install certbot-dns-cloudflare
 
-# Create credentials file
-sudo mkdir -p /etc/cloudflare
-sudo tee /etc/cloudflare/credentials.ini << 'EOF'
-dns_cloudflare_api_token = YOUR_API_TOKEN
-EOF
-sudo chmod 600 /etc/cloudflare/credentials.ini
-
-# Request certs (non-interactive)
 sudo certbot certonly --dns-cloudflare \
   --dns-cloudflare-credentials /etc/cloudflare/credentials.ini \
   -d example.com -d '*.example.com'
-
-sudo certbot certonly --dns-cloudflare \
-  --dns-cloudflare-credentials /etc/cloudflare/credentials.ini \
-  -d preview.example.com -d '*.preview.example.com'
 ```
 
 ### Auto-renewal
 
-Add a cron job to renew certs before they expire:
-
 ```bash
 sudo crontab -e
-# Add this line:
+# Add:
 0 3 * * * certbot renew --quiet --deploy-hook "systemctl reload nginx"
 ```
 
 ---
 
-## AI Wizard (OpenClaw Gateway)
-
-The wizard chat interface requires **[OpenClaw](https://github.com/openclaw/openclaw)** installed as a local LLM gateway. This is a separate dependency from the Python engine — it handles model routing, session management, and provides a chat completions API that the Django app consumes.
-
-### Install OpenClaw
-
-```bash
-npm install -g openclaw
-```
-
-### Quick Setup
-
-1. Create a wizard config at `~/.openclaw/openclaw-wizard.json` (see [docs/WIZARD-GATEWAY.md](docs/WIZARD-GATEWAY.md) for full config reference):
-   ```json
-   {
-     "gateway": {
-       "mode": "local",
-       "port": 18790,
-       "bind": "loopback",
-       "auth": { "mode": "none" }
-     }
-   }
-   ```
-2. Create state directory: `mkdir -p ~/.openclaw-wizard-state`
-3. Start the gateway:
-   ```bash
-   OPENCLAW_CONFIG_PATH=~/.openclaw/openclaw-wizard.json \
-     OPENCLAW_STATE_DIR=~/.openclaw-wizard-state \
-     openclaw gateway --port 18790
-   ```
-4. Verify: `curl -s http://127.0.0.1:18790/v1/models`
-
-The Django app connects to the wizard at `http://127.0.0.1:18790/v1` by default (configurable via `STUDIO_LOCAL_URL` setting).
-
-> **Full guide:** See [docs/WIZARD-GATEWAY.md](docs/WIZARD-GATEWAY.md) for the complete setup including systemd service, multi-provider config, LLM Gateway mode, and troubleshooting.
-
----
-
 ## GitHub App Integration
 
-The engine connects to **users' own GitHub repos** via a [GitHub App](https://docs.github.com/en/developers/apps). Each user installs the app on their own account or org, and the engine gets scoped access to only their repos.
+The engine connects to **users' own GitHub repos** via a GitHub App. Each user installs the app on their own account or org.
 
 ### How It Works
 
 1. **Instance owner** creates a GitHub App (one-time setup)
-2. **End users** install the app on their own GitHub accounts or orgs
-3. GitHub fires an `installation` webhook → the engine links the installation to that user and records the repo list
-4. When a user creates a project, they pick from **their own installations** — other users' repos are never visible
-5. The agent clones, commits, and pushes using installation-scoped tokens (no cross-user access)
+2. **End users** install the app on their GitHub accounts
+3. GitHub fires an `installation` webhook → engine links the installation to that user
+4. Users pick from **their own installations** when creating projects
+5. The agent clones, commits, and pushes using installation-scoped tokens
 
-> **Users bring their own repos.** The instance owner never has access to user repos. Each user only sees their own installations and repos.
+> Users bring their own repos. The instance owner never has access to user repos.
 
-### Step 1: Create the GitHub App
+### Setup
 
 1. Go to **GitHub → Settings → Developer settings → GitHub Apps → New GitHub App**
-2. Fill in:
-   - **GitHub App name**: e.g. `MyApp Builder`
-   - **Homepage URL**: your app's URL (e.g. `https://example.com`)
+2. Set:
+   - **Homepage URL**: your app URL
    - **Webhook URL**: `https://example.com/github/webhook/`
-   - **Webhook secret**: generate a random string and save it
-3. Under **Repository permissions**:
-   - **Contents**: Read and write
-   - **Metadata**: Read-only
+   - **Webhook secret**: generate a random string
+3. Under **Repository permissions**: Contents = Read & write, Metadata = Read-only
 4. Under **Subscribe to events**: check `installation` and `installation_repositories`
-5. Click **Create GitHub App**
-6. On the app's settings page, click **Generate a new private key** and download the `.pem` file
-
-### Step 2: Store the credentials
-
-Copy the `.pem` file to your server:
-
-```bash
-sudo mkdir -p /etc/myapp/secrets
-sudo cp ~/Downloads/myapp-builder.2024-01-01.private-key.pem /etc/myapp/secrets/github-app.pem
-sudo chmod 600 /etc/myapp/secrets/github-app.pem
-```
-
-Add to your Django settings:
+5. Create the app, then **Generate a new private key** (.pem file)
+6. Store credentials and configure in Django settings:
 
 ```python
-GITHUB_APP_ID = '123456'                                    # From the GitHub App settings page
+GITHUB_APP_ID = '123456'
 GITHUB_APP_PRIVATE_KEY_PATH = '/etc/myapp/secrets/github-app.pem'
-GITHUB_WEBHOOK_SECRET = 'whsec_your-random-secret-here'      # What you generated in step 1
+GITHUB_WEBHOOK_SECRET = 'whsec_your-random-secret-here'
 ```
-
-### Step 3: Verify the webhook URL works
-
-Before users can install your app, GitHub needs to successfully deliver a `ping` webhook. Make sure:
-
-- Your server is reachable at the webhook URL (`https://example.com/github/webhook/`)
-- The URL is wired in your `urls.py` (see Quick Start step 6)
-- Gunicorn is running and can accept POST requests
-
-### Permissions Summary
-
-| Permission | Access | Why |
-|------------|--------|-----|
-| Contents | Read & write | Clone repos, commit & push agent changes |
-| Metadata | Read-only | Identify installations |
-
-### How Users Connect Their Repos
-
-1. User visits your app's GitHub setup page (`/github/setup/`)
-2. GitHub App installation flow opens
-3. User chooses which account/org to install on and which repos to grant access to
-4. GitHub fires an `installation` webhook → the engine links the installation to the user (matched by GitHub social auth or username) and syncs the repo list
-5. The setup page shows only the user's own installations and repos
-6. When the user creates a project, they select one of their installations — the engine uses their installation token to clone and push
-
-**Important:** Installations are scoped per-user. A user can never see or use another user's GitHub installation. The webhook handler matches the `sender` (the GitHub user who installed) to a SaaSClaw account automatically.
 
 ---
 
-## System Requirements
+## How Projects Store Data
 
-| Component | Version | Notes |
-|-----------|---------|-------|
-| Python | 3.11+ | |
-| PostgreSQL | 14+ | Required (not SQLite) |
-| Redis | 6+ | Celery broker |
-| Nginx | 1.18+ | Per-project config generation |
-| Certbot | 1.20+ | SSL certificate management |
-| Node.js | 18+ | Via fnm (auto-detected per project for Vite/Next.js builds) |
-| Let's Encrypt | | certs at `/etc/letsencrypt/live/` |
-| `.NET` SDK | 9+ | Optional — auto-installed on demand for .NET projects |
-| OpenClaw | latest | `npm install -g openclaw` (required for AI wizard — see [AI Wizard](#ai-wizard-openclaw-gateway)) |
+Every deployed project gets a dedicated PostgreSQL database, auto-provisioned on deploy.
+
+| Environment | Database Name | Role |
+|-------------|-------------|------|
+| Preview | `saasclaw_{slug}` | `sc_{slug}` |
+| Production | `saasclaw_{slug}_production` | `sc_{slug}_production` |
+
+Connection details are injected as environment variables (`DATABASE_URL`, `POSTGRES_*`, `ConnectionStrings__DefaultConnection` for .NET).
+
+### Form API for Static Sites
+
+Static sites (HTML, React, Vue, Svelte, Hugo) can submit form data via a secure API — no backend needed in the project.
+
+**Endpoint:** `POST /api/forms/{project-slug}/`
+
+Security: per-project API key (`X-Form-Key` header), Redis rate limiting (10/min per IP), origin validation, honeypot anti-spam.
+
+See the [SaaSClaw app README](https://github.com/saasclawai-org/saasclaw) for full Form API documentation.
+
+---
 
 ## Engine API
 
@@ -556,10 +408,7 @@ Before users can install your app, GitHub needs to successfully deliver a `ping`
 ```python
 from saasclaw_engine.deployments.service import deploy_preview, deploy_production
 
-# Deploy a project's latest commit to preview
 deploy_preview(project, user, log_file)
-
-# Promote to production
 deploy_production(project, environment, user, log_file)
 ```
 
@@ -568,7 +417,6 @@ deploy_production(project, environment, user, log_file)
 ```python
 from saasclaw_engine.deployments.service import decommission_project
 
-# Safely decommission a project — stops services, removes nginx, logs actions
 decommission_project(project_slug, project_name)
 ```
 
@@ -579,12 +427,8 @@ from saasclaw_engine.agent.runner import run_agent
 from saasclaw_engine.studio_models.models import AgentSession
 
 session = AgentSession.objects.create(
-    project=project,
-    user=user,
-    provider='zai',
-    model='glm-5.2',
+    project=project, user=user, provider='zai', model='glm-5.2',
 )
-
 result = run_agent(session, "Build me a Django REST API with user auth")
 ```
 
@@ -592,255 +436,73 @@ result = run_agent(session, "Build me a Django REST API with user auth")
 
 ```python
 from saasclaw_engine.integrations.github import (
-    clone_or_update_repo,
-    commit_and_push_repo,
-    get_installation_token,
+    clone_or_update_repo, commit_and_push_repo, get_installation_token,
 )
 
-# Get an installation access token for a user's GitHub App installation
 token = get_installation_token(installation_id)
-
-# Clone a user's repo into a worktree
 clone_or_update_repo(project, token)
-
-# Commit changes and push
 commit_and_push_repo(project, message="Add new feature", token=token)
 ```
 
-## Project Components
+---
 
-| Package | Description |
-|---------|-------------|
-| `saasclaw_engine.agent` | Pi Bridge (RPC agent), fallback runner, and agent tools (file I/O, bash, git, web, todos) |
-| `saasclaw_engine.deployments` | Models (Project, Environment, Deployment, Domain, EnvVar), deploy pipeline with secret/dependency scanning, nginx config generation, project decommissioning |
-| `saasclaw_engine.integrations` | GitHub App auth, per-user installation scoping, repo tracking, webhook handling |
-| `saasclaw_engine.agents` | Celery task models and async task execution |
-| `saasclaw_engine.projects` | Project model with framework, runtime, risk tier, and config fields; ProjectSubmission with AI disclosure tracking |
-| `saasclaw_engine.studio_models` | AgentSession, ProviderKey, Workspace, Todo, TokenUsage models |
-| `saasclaw_engine.help_search` | RAG-based help search using ChromaDB |
+## PII Protection
 
-## How Projects Store Data
+Every message sent to an LLM passes through **PII Guard**, a Presidio-based microservice on `localhost:8900`.
 
-Every deployed project on SaaSClaw gets access to a dedicated PostgreSQL database on the local server. This happens automatically — no manual database setup required.
+**Detection patterns:** SSNs, credit cards, phone numbers, emails, addresses, bank accounts, DOB, passports, driver's licenses, salary, DB connection strings, AWS keys, IP addresses.
 
-### Automatic Database Provisioning
+**Redaction:** Detected values are replaced with synthetic placeholders (`{{SSN}}`, `{{EMAIL}}`, etc.) before reaching the LLM.
 
-When a project is deployed, the deploy pipeline calls `_ensure_postgres_database()` which:
+**Fallback:** If the service is unreachable, identical built-in regex patterns are used — zero downtime.
 
-1. Connects to the local PostgreSQL instance as `saasclaw_admin`
-2. Creates a dedicated role and database if they don't exist
-3. Injects connection details as environment variables into the project's `.env` file
+### LLM Gateway Mode
 
-Preview and production environments get **separate databases** — no shared state:
+For projects requiring data never leave your infrastructure, enable **LLM Gateway mode** per-project. This forces all agent requests through a local LLM endpoint (vLLM, Ollama, LM Studio) and blocks cloud providers.
 
-| Environment | Database Name | Role | Password |
-|-------------|-------------|------|----------|
-| Preview | `saasclaw_{slug}` | `sc_{slug}` | Auto-generated |
-| Production | `saasclaw_{slug}_production` | `sc_{slug}_production` | Auto-generated |
+### Prompt Injection Defense
 
-### Environment Variables
+All user input is scanned using the [sunglasses](https://github.com/sunglasses-dev/sunglasses) library (1094 patterns, 65 attack categories, 23 languages). Dual-layer defense scans at both the wizard endpoint and the agent runner.
 
-Each runtime receives these env vars in its `.env` file:
+---
 
-| Variable | Description | Python | Node SSR | .NET |
-|----------|-------------|--------|----------|------|
-| `DATABASE_URL` | Standard connection string | ✅ | ✅ | ✅ |
-| `POSTGRES_DB` | Database name | ✅ | ✅ | ✅ |
-| `POSTGRES_USER` | Role name | ✅ | ✅ | ✅ |
-| `POSTGRES_PASSWORD` | Role password | ✅ | ✅ | ✅ |
-| `POSTGRES_HOST` | Host (default `127.0.0.1`) | ✅ | ✅ | ✅ |
-| `POSTGRES_PORT` | Port (default `5432`) | ✅ | ✅ | ✅ |
-| `ConnectionStrings__DefaultConnection` | .NET convention | — | — | ✅ |
+## System Requirements
 
-User-defined environment variables (set in the studio UI) override defaults and persist across redeploys.
-
-### Per-Runtime Details
-
-**Python (Django, Flask, FastAPI):**
-- Django projects get automatic `manage.py migrate` and admin user creation on deploy
-- Flask/htmx starter templates include `flask-sqlalchemy` and `flask-migrate` pre-configured
-- Templates use an app factory pattern that reads `DATABASE_URL` first, then builds from `POSTGRES_*` vars
-
-**Node SSR (Next.js, Nuxt):**
-- `DATABASE_URL` is compatible with Prisma, Drizzle, Knex, Sequelize, and most Node ORMs
-- No automatic migrations — the project handles its own schema management
-
-**.NET:**
-- `ConnectionStrings__DefaultConnection` follows ASP.NET Core convention
-- `appsettings.json` not needed — the deploy pipeline writes all connection info to the `.env` file
-
-**Static Sites (HTML, React, Vue, Svelte, Hugo):**
-- No server-side runtime, so no database connection
-- Use the **Form API** to accept form submissions from static sites (see below)
-
-### Form API for Static Sites
-
-Static sites can submit form data via a secure API endpoint — no backend needed in the project itself.
-
-**Endpoint:** `POST /api/forms/{project-slug}/`
-
-**Security (all three layers enforced):**
-
-| Layer | Mechanism | Details |
-|-------|-----------|----------|
-| **API key** | `X-Form-Key` header or `_form_key` body field | Per-project, auto-generated 40-char token. Regenerate from studio UI; old key invalidated immediately. |
-| **Rate limiting** | Redis-backed counter | 10 submissions/min per IP per project. Returns `429` when exceeded. |
-| **Origin validation** | `Origin`/`Referer` header check | Rejects requests from domains not matching the project's deployed domains. |
-
-Additional: honeypot anti-spam, 100KB size limit, blocked for suspended/archived projects.
-
-**Response codes:** `201` success, `403` invalid key or blocked origin, `404` project not found, `429` rate limited.
-
-**Environment tagging:**
-- Submissions from preview domains (`*.preview.saasclaw.ai`) are tagged `environment=preview`
-- Submissions from production domains are tagged `environment=production`
-- The nginx proxy passes `X-Forwarded-Host` so Django auto-detects the environment
-- Filter with `GET /api/forms/{slug}/list/?environment=preview|production`
-- Database console UI shows All/Preview/Production filter buttons
-
-**Preview domain proxy:**
-- Static site nginx configs include `location /api/forms/` that proxies to Django
-- This lets static sites POST to `/api/forms/` same-origin (no CORS issues)
-- The proxy sets `Host: saasclaw.ai` (for Django's `ALLOWED_HOSTS`) and `X-Forwarded-Host` (for env detection)
-
-**Management:**
-- `GET /api/forms/{slug}/list/` — list submissions (project owner/staff only)
-- `DELETE /api/forms/{slug}/list/` — bulk delete all submissions
-- `GET /api/forms/{slug}/{id}/` — single submission detail
-- `DELETE /api/forms/{slug}/{id}/` — delete a single submission
-- Per-project API key generated via `Project.get_or_create_form_api_key()`
-
-**Example usage in a static site:**
-```html
-<form action="https://app.saasclaw.ai/api/forms/my-project/" method="POST">
-  <input type="hidden" name="website" value=""> <!-- honeypot -->
-  <input type="hidden" name="_form_key" value="YOUR_PROJECT_API_KEY">
-  <input type="text" name="name" required>
-  <input type="email" name="email" required>
-  <textarea name="message"></textarea>
-  <button type="submit">Send</button>
-</form>
-```
-
-Or via JavaScript:
-```javascript
-fetch('https://app.saasclaw.ai/api/forms/my-project/', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-Form-Key': 'YOUR_PROJECT_API_KEY'
-  },
-  body: JSON.stringify({name: 'Jane', email: 'jane@example.com', message: 'Hello!'})
-}).then(r => r.json()).then(data => console.log(data));
-```
-
-### Data Storage Summary
-
-| Data Type | Storage Location |
-|-----------|----------------|
-| Project metadata, users, sessions | SaaSClaw control plane PostgreSQL (`DATABASE_URL` in settings) |
-| Project application data | Per-project PostgreSQL on local server (auto-provisioned) |
-| Static site form submissions | SaaSClaw control plane PostgreSQL (`FormSubmission` model) |
-| Uploaded files / build artifacts | MinIO (S3-compatible object storage) |
-| Code | Git bare repos + worktrees |
+| Component | Version | Notes |
+|-----------|---------|-------|
+| Python | 3.11+ | |
+| PostgreSQL | 14+ | Required |
+| Redis | 6+ | Celery broker |
+| Nginx | 1.18+ | Per-project config generation |
+| Certbot | 1.20+ | SSL certificate management |
+| Node.js | 18+ | Via fnm (auto-detected per project) |
+| OpenClaw | latest | `npm install -g openclaw` (required for AI wizard) |
+| .NET SDK | 9+ | Optional — auto-installed on demand for .NET projects |
 
 ## Supported Frameworks
 
 Vite (React/Vue/Svelte), Next.js (SSR), Django, Flask, FastAPI, HTMX, Hugo, .NET/C#, static HTML
 
-## Architecture
+## Project Components
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full system architecture, including the dual-gateway LLM setup, Docker sandbox isolation, multi-tenancy model, and concurrency scaling.
-The engine handles all backend logic. You build the frontend — the wizard, file editor, project dashboard, settings — on top.
-
-## PII Protection
-
-The engine includes built-in PII detection and sanitization to prevent sensitive data from reaching LLM providers. This is critical for HR/payroll, healthcare, financial, and other data-sensitive use cases.
-
-### How It Works
-
-Every message sent to an LLM passes through **PII Guard**, a Presidio-based microservice running on `localhost:8900`. It uses spaCy NLP for context-aware detection plus 14 custom regex recognizers. Consumers call it over HTTP with automatic regex fallback if the service is down.
-
-**Detection patterns:** SSNs, credit card numbers, phone numbers, email addresses, mailing addresses, bank routing/account numbers, dates of birth, passport numbers, driver's licenses, salary/compensation, database connection strings, AWS access keys, and IP addresses.
-
-**Redaction:** Detected values are replaced with synthetic placeholders (`{{SSN}}`, `{{SALARY}}`, `{{EMAIL}}`, etc.) before the message reaches the LLM.
-
-**Fallback:** If the service is unreachable, consumers use identical built-in regex patterns — zero downtime.
-
-See [docs/PII-PROTECTION.md](docs/PII-PROTECTION.md) for the full guide.
-
-### LLM Gateway Mode
-
-For projects that require data never leave your infrastructure, enable **LLM Gateway mode** on the project. This forces all agent requests through a local/self-hosted LLM endpoint (vLLM, Ollama, LM Studio) and blocks cloud providers entirely.
-
-**Configuration:**
-```python
-# settings.py
-LLM_GATEWAY_URL = 'http://your-vllm-server:8080/v1'  # OpenAI-compatible endpoint
-LLM_GATEWAY_MODEL = 'meta-llama/Llama-3.1-70B-Instruct'  # or leave empty to use default
-LLM_GATEWAY_BLOCKED_PROVIDERS = ['zai', 'openai', 'anthropic', 'google', 'mistral', 'groq']
-```
-
-**Per-project toggle:** Staff users can enable `require_gateway` on individual projects. When enabled:
-1. Cloud providers in the blocked list are overridden to `local`
-2. The LLM base URL is set to `LLM_GATEWAY_URL`
-3. PII Guard still runs as defense-in-depth
-4. Data never leaves your server
-
-### Defense in Depth
-
-The engine applies multiple layers of protection:
-
-| Layer | What it does | Always active? |
-|-------|-------------|---------------|
-| **PII Guard** | Presidio + spaCy microservice detects and redacts sensitive patterns | Yes, every LLM call |
-| **Regex fallback** | Built-in regex if PII Guard service is down | Automatic |
-| **Prompt Injection Guard** | Scans user input for injection patterns (sunglasses library) | Yes, every message |
-| **LLM Gateway** | Routes requests to local LLM, blocks cloud providers | Per-project toggle |
-| **Audit logging** | Logs redaction counts, injection blocks, and pattern types | Yes |
-
-## Prompt Injection Defense
-
-All user input to the wizard and agent runner is scanned for prompt injection attempts using the [sunglasses](https://github.com/sunglasses-dev/sunglasses) library (1094 patterns, 65 attack categories, 23 languages).
-
-### How It Works
-
-A dual-layer defense scans every message:
-
-1. **Wizard endpoint** — user input is scanned before reaching the agent. Blocked input returns HTTP 422 with severity and findings.
-2. **Agent runner** — `run_agent()` scans again as a fallback, catching anything that bypasses the endpoint.
-
-**Detection capabilities:**
-- Direct instruction override ("ignore all previous instructions")
-- Role-play attacks (DAN, persona switching)
-- System prompt extraction attempts
-- Unicode evasion (zero-width characters, RTL override, homoglyphs)
-- Base64-encoded attacks
-- Multimodal scanning (OCR on uploaded images)
-
-**Performance:** <3ms per scan, zero GPU required.
-
-**Audit trail:** Blocked attempts are logged to `/srv/saasclaw/logs/prompt-guard.log` with timestamp, source project, severity, and matched patterns.
-
-**Graceful degradation:** If sunglasses is not installed, all input is allowed (with a log warning).
-
-### What's Not Covered
-
-- **Images/screenshots**: PII Guard is text-only. Image-based PII is not detected.
-- **Deployed application data**: PII Guard protects the *build process*. Data in the apps users build is the application's own responsibility.
-
-### Extending PII Guard
-
-Custom PII patterns can be added via the Studio Settings UI (stored in database, loaded by the service on startup). See [docs/PII-PROTECTION.md](docs/PII-PROTECTION.md) for the full guide.
+| Package | Description |
+|---------|-------------|
+| `saasclaw_engine.agent` | Agent runner and tools (file I/O, bash, git, web, todos) |
+| `saasclaw_engine.deployments` | Models, deploy pipeline with secret/dependency scanning, nginx config generation, decommissioning |
+| `saasclaw_engine.integrations` | GitHub App auth, per-user installation scoping, webhook handling |
+| `saasclaw_engine.agents` | Celery task models and async task execution |
+| `saasclaw_engine.projects` | Project model with framework, runtime, risk tier, and config fields |
+| `saasclaw_engine.studio_models` | AgentSession, ProviderKey, Workspace, Todo, TokenUsage models |
+| `saasclaw_engine.help_search` | RAG-based help search using ChromaDB |
 
 ## Testing
 
-365 tests across 16 test files. See [docs/TESTING.md](docs/TESTING.md) for the full guide.
+576 tests across 16 test files.
 
 ```bash
-python3 -m pytest           # run all
-python3 -m pytest -v        # verbose
-python3 -m pytest -k "form"  # filter by name
+python -m pytest           # run all
+python -m pytest -v        # verbose
+python -m pytest -k "form" # filter by name
 ```
 
 ## License
@@ -850,4 +512,4 @@ AGPL-3.0. See [LICENSE](LICENSE).
 ## Links
 
 - [SaaSClaw](https://saasclaw.ai) — The production platform built on this engine
-- [Issues](https://github.com/normandmickey/saasclaw-engine/issues) — Bug reports and feature requests
+- [Issues](https://github.com/saasclawai-org/saasclaw-engine/issues) — Bug reports and feature requests
