@@ -19,7 +19,7 @@ from .deploy_infra import (
     _load_env_file, _serialize_env_file, _write_text, _normalize_ownership,
     _run_command, _slugify_system_name, _ensure_app_port,
     _ensure_postgres_database, _wait_for_http_healthcheck,
-    _ensure_systemd_service, _ensure_nginx_spa_proxy,
+    _ensure_systemd_service, _ensure_nginx_spa_proxy, _ensure_nginx_proxy,
     _restart_service, _ensure_django_admin_user,
 )
 
@@ -315,10 +315,13 @@ def _deploy_django_environment(project: Project, environment: Environment, deplo
         log_file=log_file,
     )
 
-    # Healthcheck
-    # Write SPA nginx BEFORE healthcheck so it routes correctly
+    # Nginx config — write BEFORE healthcheck so routing works
     if has_frontend and frontend_web_root:
+        # React-Django: SPA frontend + API proxy
         _ensure_nginx_spa_proxy(service_name, environment.domain, environment.app_port, frontend_web_root, static_root, log_file)
+    else:
+        # Plain Django/Flask/FastAPI: standard reverse proxy
+        _ensure_nginx_proxy(service_name, environment.domain, environment.app_port, log_file=log_file)
     healthcheck_path = '/api/health/' if has_frontend else (environment.healthcheck_path or '/health/')
     health_url = f'https://{environment.domain}{healthcheck_path}'
     _wait_for_http_healthcheck(health_url, log_file)
