@@ -20,7 +20,9 @@ def run_preview_deploy_job(self, project_id: int, user_id: int | None = None) ->
         return deployment.id
     except Exception as exc:
         logger.error("Deploy task failed:\n%s", traceback.format_exc())
-        raise
+        # Re-raise with the full error message so the wizard agent can read
+        # the actual build/compile errors and attempt to fix them.
+        raise RuntimeError(str(exc)) from exc
 
 
 @shared_task(bind=True)

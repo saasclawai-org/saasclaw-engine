@@ -638,7 +638,10 @@ def _deploy_project_tool(workspace_path: str, environment: str = "preview") -> s
             deployment_id = task_result.get(timeout=180)
             results.append(f"✅ Deploy task completed (id: {deployment_id})")
         except Exception as exc:
-            results.append(f"⚠️ Deploy task error: {exc}")
+            error_msg = str(exc)
+            results.append(f"❌ Deploy failed:\n{error_msg}")
+            results.append("\n💡 Fix the errors above, then run deploy again.")
+            return "\n".join(results)
         
         # Step 5: Copy build output to web root + configure nginx (for static sites)
         if env.runtime_kind == 'static' and dist_dir:

@@ -91,7 +91,14 @@ def _run_command(command: str, cwd: Path, log_file: Path, env: dict = None) -> N
             handle.write(result.stderr)
         handle.write(f'[exit {result.returncode}]\n')
         if result.returncode != 0:
-            raise RuntimeError(f'Command failed (exit {result.returncode}): {command}')
+            # Capture last 2000 chars of output so callers (and the wizard agent)
+            # can see the actual compile/build errors and fix them.
+            output = (result.stdout or '') + (result.stderr or '')
+            tail = output[-2000:] if len(output) > 2000 else output
+            raise RuntimeError(
+                f'Command failed (exit {result.returncode}): {command}\n'
+                f'--- output (tail) ---\n{tail}'
+            )
 
 
 def _run_logged_subprocess(args: list[str], cwd: Path, log_file: Path) -> None:
