@@ -422,15 +422,95 @@ decommission_project(project_slug, project_name)
 
 ### Agent System
 
+The simplest way to use the agent is through the wizard gateway's OpenAI-compatible API. Once you have the engine running with an OpenClaw gateway (see [AI Wizard](#ai-wizard--openclaw-gateway) above), any OpenAI-compatible client works:
+
+#### Quick Example: Create and edit a project via LLM
+
+```python
+"""Create a project and have the AI agent build it."""
+import requests, json, time
+
+# --- 1. Create a project via Django ORM ---
+import django, os
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myapp.settings')
+django.setup()
+
+from saasclaw_engine.projects.models import Project
+from saasclaw_engine.studio_models.models import Workspace, AgentSession
+from django.contrib.auth.models import User
+
+user = User.objects.get(username='me')
+project = Project.objects.create(
+    name='My AI App',
+    slug='my-ai-app',
+    owner=user,
+    framework='vite',  # vite, nextjs, django, flask, htmx, hugo, dotnet
+)
+workspace = Workspace.objects.create(
+    project=project,
+    local_path=f'/srv/myapp/projects/{project.slug}/repo',
+    is_active=True,
+    user=user,
+)
+
+# --- 2. Send the build instruction to the agent ---
+GATEWAY_URL = 'http://127.0.0.1:18790/v1/chat/completions'
+SESSION_KEY = f'wizard-{project.slug}'
+
+resp = requests.post(GATEWAY_URL, json={
+    'model': 'openclaw',  # routes to the agent loop with tools
+    'sessionKey': SESSION_KEY,
+    'stream': False,
+    'messages': [{
+        'role': 'user',
+        'content': 'Build a todo list app with add, complete, and delete. Use React + TypeScript. Make it look clean with a dark theme.',
+    }],
+}, timeout=300)
+result = resp.json()
+assistant_message = result['choices'][0]['message']['content']
+print('Agent:', assistant_message)
+
+# --- 3. Iterate: send a follow-up edit ---
+resp = requests.post(GATEWAY_URL, json={
+    'model': 'openclaw',
+    'sessionKey': SESSION_KEY,  # same key = same conversation
+    'stream': False,
+    'messages': [{
+        'role': 'user',
+        'content': 'Add local storage persistence so todos survive page refresh.',
+    }],
+}, timeout=300)
+print('Follow-up:', resp.json()['choices'][0]['message']['content'])
+
+# --- 4. Deploy ---
+from saasclaw_engine.deployments.service import deploy_preview
+deployment = deploy_preview(project, triggered_by=user)
+print(f'Deploy {deployment.status}: https://{project.slug}.preview.example.com/')
+```
+
+#### Using the agent runner directly (Python only)
+
 ```python
 from saasclaw_engine.agent.runner import run_agent
-from saasclaw_engine.studio_models.models import AgentSession
 
-session = AgentSession.objects.create(
-    project=project, user=user, provider='zai', model='glm-5.2',
+messages = run_agent(
+    workspace_path='/srv/myapp/projects/my-ai-app/repo',
+    project_name='My AI App',
+    conversation=[],  # empty = new conversation
+    user_message='Build a Django REST API with user auth',
+    provider='openai',          # openai, anthropic, zai, or local
+    model='gpt-5.4-mini',       # any model the provider supports
+    user=user,
+    project_context='This is a fresh Vite + React + TypeScript project.',
 )
-result = run_agent(session, "Build me a Django REST API with user auth")
+# messages = list of {role, content, tool_call} dicts from the agent
+for msg in messages:
+    print(f'[{msg["role"]}] {msg["content"][:200]}')
 ```
+
+**Providers:** `openai` (GPT-5.5, GPT-5.4, etc.), `anthropic` (Claude family), `zai` (GLM family), `local` (your own gateway)
+
+> **BYO keys:** Users add their own provider API keys via the encrypted `ProviderKey` model. The agent uses the user's key — no markup, no middleman.
 
 ### GitHub Integration
 
