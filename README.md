@@ -495,6 +495,32 @@ Vite (React/Vue/Svelte), Next.js (SSR), Django, Flask, FastAPI, HTMX, Hugo, .NET
 | `saasclaw_engine.studio_models` | AgentSession, ProviderKey, Workspace, Todo, TokenUsage models |
 | `saasclaw_engine.help_search` | RAG-based help search using ChromaDB |
 
+## Why Self-Host?
+
+SaaSClaw Engine is the open-source alternative to closed AI app builders. When you self-host, there are no per-seat licenses, no credit systems, and no token markups — you bring your own LLM API keys and pay your provider directly.
+
+| Feature | SaaSClaw (self-hosted) | Bolt.new | Lovable | v0 (Vercel) |
+|---|---|---|---|---|
+| **License** | AGPL-3.0 (open source) | Proprietary | Proprietary | Proprietary |
+| **Self-hostable** | ✅ Your server, your rules | ❌ | ❌ | ❌ |
+| **Bring your own API keys** | ✅ Use any provider | ❌ | ❌ | ❌ |
+| **LLM cost** | Your provider's raw cost (no markup) | Token packages | Credit system | Credit system |
+| **Project limit** | Unlimited (your hardware) | Plan-based | Plan-based | Plan-based |
+| **Data residency** | You control it | Their cloud | Their cloud | Their cloud |
+| **Code ownership** | Full — it's your Git repo | Export | GitHub sync | Export |
+| **Vendor lock-in** | None | High | High | High (Vercel) |
+| **Multi-framework** | Django, React, Next.js, Svelte, .NET, Hugo | React, Svelte | React/Next.js | React/Next.js |
+| **Agent loop** | OpenClaw (open source) | Closed | Closed | Closed |
+| **Deploy to own server** | ✅ Built-in | ❌ | ❌ | ❌ (Vercel only) |
+| **Built-in database** | PostgreSQL per project | ✅ | Supabase | ❌ |
+| **Form API for static sites** | ✅ | ❌ | ❌ | ❌ |
+| **PII redaction** | ✅ Presidio + regex fallback | ❌ | ❌ | ❌ |
+| **Prompt injection defense** | ✅ 1094 patterns, 23 languages | ❌ | ❌ | ❌ |
+
+With SaaSClaw self-hosted, your only costs are the infrastructure you already run and whatever LLM API fees you already pay. No subscriptions, no credits, no token packages to purchase.
+
+---
+
 ## Testing
 
 576 tests across 16 test files.
