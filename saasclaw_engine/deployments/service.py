@@ -41,6 +41,19 @@ from .deploy_dotnet import _ensure_dotnet_sdk, _detect_dotnet_entrypoint, _deplo
 
 logger = logging.getLogger(__name__)
 
+def _set_deploy_phase(deployment, phase, detail=''):
+    """Update deployment.metadata_json with current phase for UI progress tracking."""
+    try:
+        phases = (deployment.metadata_json or {}).get('phases', [])
+        # Don't add duplicate phases
+        if not phases or phases[-1].get('name') != phase:
+            phases.append({'name': phase, 'detail': detail, 'ts': dj_timezone.now().isoformat()})
+            deployment.metadata_json = {**(deployment.metadata_json or {}), 'phases': phases, 'current_phase': phase}
+            deployment.save(update_fields=['metadata_json'])
+    except Exception:
+        pass
+
+
 def _deploy_environment(project: Project, environment_name: str, triggered_by=None) -> Deployment:
     """Main deploy entry point. Clones repo, runs deploy pipeline for the environment."""
     environment = project.environments.filter(name=environment_name).first()
@@ -65,7 +78,9 @@ def _deploy_environment(project: Project, environment_name: str, triggered_by=No
         deployment.status = Deployment.Status.RUNNING
         deployment.started_at = dj_timezone.now()
         deployment.save(update_fields=['status', 'started_at'])
+        _set_deploy_phase(deployment, 'starting', 'Initializing deploy')
 
+        _set_deploy_phase(deployment, 'merge', 'Pulling latest code')
         _refresh_repo_checkout_for_deploy(project, repo_path, log_file)
         deployment.git_commit_sha = _repo_commit_sha(repo_path)
         deployment.save(update_fields=['git_commit_sha'])
@@ -110,6 +125,7 @@ def _deploy_environment(project: Project, environment_name: str, triggered_by=No
             deployment.save(update_fields=['status', 'error_message', 'finished_at', 'deploy_log_object_key'])
             raise RuntimeError(deployment.error_message)
 
+        _set_deploy_phase(deployment, 'build', f'Building {environment.runtime_kind} app')
         if environment.runtime_kind == Environment.RuntimeKind.DJANGO:
             _deploy_django_environment(project, environment, deployment, repo_path, log_file)
         elif environment.runtime_kind == Environment.RuntimeKind.NODE_SSR:
@@ -119,9 +135,11 @@ def _deploy_environment(project: Project, environment_name: str, triggered_by=No
         else:
             _deploy_static_environment(project, environment, deployment, repo_path, log_file)
 
+        _set_deploy_phase(deployment, 'health', 'Running health check')
         deployment.status = Deployment.Status.SUCCEEDED
         deployment.finished_at = dj_timezone.now()
-        deployment.save(update_fields=['status', 'finished_at'])
+        deployment.metadata_json = {**(deployment.metadata_json or {}), 'current_phase': 'done'}
+        deployment.save(update_fields=['status', 'finished_at', 'metadata_json'])
 
         project.last_deployed_at = dj_timezone.now()
         project.save(update_fields=['last_deployed_at'])
