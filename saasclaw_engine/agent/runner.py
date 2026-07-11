@@ -151,9 +151,9 @@ def run_agent(
         if total_usage["total_tokens"] > 0:
             est = _estimate_cost(provider or os.environ.get("STUDIO_LLM_PROVIDER", "zai"), model or os.environ.get("STUDIO_MODEL", "glm-5.1"), total_usage["prompt_tokens"], total_usage["completion_tokens"])
             if est > MAX_TOOL_COST_PER_TURN:
-                msg_text = f"⚠️ Reached ${est:.2f} spend limit for this turn. Committing progress and stopping."
+                msg_text = "⚠️ Token limit reached for this turn. Committing progress and stopping."
                 new_messages.append({"role": "assistant", "content": msg_text, "tool_call": {}})
-                logger.warning("Cost limit hit: $%.2f at round %d", est, round_num)
+                logger.warning("Token limit hit at round %d", round_num)
                 break
 
         # Sanitize messages before sending to LLM (redact PII)
