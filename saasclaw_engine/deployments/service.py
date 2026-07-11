@@ -135,6 +135,7 @@ def _deploy_environment(project: Project, environment_name: str, triggered_by=No
         else:
             _deploy_static_environment(project, environment, deployment, repo_path, log_file)
 
+        _set_deploy_phase(deployment, 'deploy', 'Configuring nginx & restarting service')
         _set_deploy_phase(deployment, 'health', 'Running health check')
         deployment.status = Deployment.Status.SUCCEEDED
         deployment.finished_at = dj_timezone.now()
