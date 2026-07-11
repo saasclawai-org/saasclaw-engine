@@ -239,6 +239,10 @@ class SiteSettings(models.Model):
         default=False,
         help_text='Block deploy when high/critical security findings are detected (advisory by default).'
     )
+    semgrep_scan_enabled = models.BooleanField(
+        default=True,
+        help_text='Run Semgrep static analysis during deploy to detect malware and dangerous code patterns.'
+    )
 
     # AI governance
     default_require_gateway = models.BooleanField(

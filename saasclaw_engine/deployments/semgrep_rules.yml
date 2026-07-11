@@ -1,0 +1,209 @@
+# SaaSClaw custom Semgrep rules — malware & dangerous code detection
+# Targets patterns common in AI-generated malicious code.
+# Runs via: semgrep scan --config semgrep_rules.yml --json
+
+rules:
+  # --- Reverse shells & bind shells ---
+  - id: saasclaw-reverse-shell-python
+    message: "Possible reverse shell — socket connection with subprocess/exec"
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern: |
+          import socket
+          ...
+          $S = socket.socket(...)
+          ...
+          $S.connect(...)
+          ...
+          subprocess.Popen(..., stdin=$S.fileno(), stdout=$S.fileno(), stderr=$S.fileno())
+  - id: saasclaw-reverse-shell-python-exec
+    message: "Possible reverse shell — exec/eval over socket"
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern: |
+          import socket
+          ...
+          $S = socket.socket(...)
+          ...
+          exec(...)
+
+  - id: saasclaw-bind-shell-python
+    message: "Possible bind shell — listening socket with exec/eval"
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern: |
+          $S = socket.socket(...)
+          ...
+          $S.bind(...)
+          ...
+          $S.listen(...)
+          ...
+          exec(...)
+
+  # --- Node.js reverse shells ---
+  - id: saasclaw-reverse-shell-node
+    message: "Possible reverse shell — net.Socket with child_process"
+    languages: [javascript, typescript]
+    severity: ERROR
+    patterns:
+      - pattern: |
+          require('net')
+          ...
+          require('child_process')
+          ...
+          $S.connect(...)
+
+  # --- Crypto miners ---
+  - id: saasclaw-crypto-miner-process
+    message: "Possible cryptocurrency miner process invocation"
+    languages: [python, javascript, typescript]
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.Popen(["xmrig", ...])
+          - pattern: subprocess.Popen([...minerd, ...])
+          - pattern: execFileSync("xmrig", ...)
+          - pattern: spawn("xmrig", ...)
+          - pattern: "stratum+tcp"
+
+  # --- Keyloggers ---
+  - id: saasclaw-keylogger-python
+    message: "Possible keylogger — keyboard hook with network exfiltration"
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: |
+              import keyboard
+              ...
+              $S = socket.socket(...)
+          - pattern: |
+              from pynput import keyboard
+              ...
+              $S = socket.socket(...)
+          - pattern: |
+              import keyboard
+              ...
+              requests.post(...)
+
+  # --- Dangerous subprocess with shell=True ---
+  - id: saasclaw-shell-injection-python
+    message: "subprocess with shell=True and variable input — shell injection risk"
+    languages: [python]
+    severity: WARNING
+    patterns:
+      - pattern: subprocess.run($CMD, shell=True, ...)
+      - pattern-not: subprocess.run("...", shell=True, ...)
+      - pattern-not: subprocess.run([...], shell=True, ...)
+
+  # --- eval/exec on untrusted input ---
+  - id: saasclaw-eval-untrusted
+    message: "eval()/exec() on dynamic content — code injection risk"
+    languages: [python]
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: exec($X)
+      - pattern-not: eval("...")
+      - pattern-not: exec("...")
+
+  # --- Node.js eval/Function injection ---
+  - id: saasclaw-node-eval-injection
+    message: "eval()/new Function() on dynamic content — code injection risk"
+    languages: [javascript, typescript]
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: new Function($X)
+      - pattern-not: eval("...")
+
+  # --- Obfuscated code (base64 blobs) ---
+  - id: saasclaw-base64-blob-python
+    message: "Large base64 blob decoded at runtime — possible obfuscated payload"
+    languages: [python]
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: base64.b64decode("...")
+          - pattern: $X.decode('base64')
+      - metavariable-regex:
+          metavariable: $X
+          regex: ".*[A-Za-z0-9+/=]{100,}.*"
+
+  - id: saasclaw-base64-blob-node
+    message: "Large base64 blob decoded at runtime — possible obfuscated payload"
+    languages: [javascript, typescript]
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: Buffer.from("...", "base64")
+          - pattern: atob("...")
+      - metavariable-regex:
+          metavariable: $X
+          regex: ".*[A-Za-z0-9+/=]{100,}.*"
+
+  # --- Data exfiltration patterns ---
+  - id: saasclaw-data-exfil-python
+    message: "Possible data exfiltration — reading system files and sending over network"
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: |
+              open("/etc/passwd")
+              ...
+              requests.post(...)
+          - pattern: |
+              open("/etc/shadow")
+              ...
+              requests.post(...)
+          - pattern: |
+              open("/etc/passwd")
+              ...
+              socket.socket(...)
+
+  # --- Credential harvesting ---
+  - id: saasclaw-credential-harvest-python
+    message: "Possible credential harvesting — reading browser/crypto wallet data"
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: open("/home/.../.ssh/id_rsa")
+          - pattern: open(".../.config/google-chrome...")
+          - pattern: open(".../wallet.dat")
+          - pattern: |
+              import shutil
+              ...
+              shutil.copy(".../.ssh/...")
+
+  # ---ctypes foreign function abuse ---
+  - id: saasclaw-ctypes-mmap-shellcode
+    message: "Possible shellcode execution via ctypes/mmap"
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern: |
+          import ctypes
+          ...
+          mmap.mmap(...)
+          ...
+          ctypes.CDLL(...)
+
+  # --- Network scanning tools ---
+  - id: saasclaw-network-scanner-python
+    message: "Possible network scanner — port scanning with socket"
+    languages: [python]
+    severity: WARNING
+    patterns:
+      - pattern: |
+          for $PORT in range(...):
+              ...
+              $S = socket.socket(...)
+              ...
+              $S.connect(($IP, $PORT))

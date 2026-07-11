@@ -26,7 +26,7 @@ from .deploy_infra import (
     _publish_directory, _pick_ssl_certs, _ensure_systemd_service,
     _write_tmp_script, _write_and_validate_nginx, _restart_service,
     _ensure_nginx_spa_proxy, _ensure_nginx_proxy, _ensure_nginx_static,
-    _scan_for_secrets, _scan_dependencies, _ensure_postgres_database,
+    _scan_for_secrets, _scan_dependencies, _scan_with_semgrep, _ensure_postgres_database,
     _wait_for_http_healthcheck,
 )
 from .deploy_django import (
@@ -114,12 +114,30 @@ def _deploy_environment(project: Project, environment_name: str, triggered_by=No
         else:
             dep_findings = []
 
+        # --- NIST AI RMF: Semgrep static analysis (after clone, before build) ---
+        if getattr(_site, 'semgrep_scan_enabled', True):
+            semgrep_findings = _scan_with_semgrep(repo_path)
+            if semgrep_findings:
+                logger.warning('Semgrep scan found %d issue(s) for %s', len(semgrep_findings), project.slug)
+                with log_file.open('a', encoding='utf-8') as handle:
+                    handle.write(f'\n=== SEMGREP SCAN ({len(semgrep_findings)} finding(s)) ===\n')
+                    for finding in semgrep_findings:
+                        handle.write(f'  WARNING: {finding}\n')
+                    handle.write('=== END SEMGREP SCAN ===\n\n')
+        else:
+            semgrep_findings = []
+
         # Block deploy if findings exist and block is enabled
-        if _site.block_deploy_on_findings and (secret_findings or dep_findings):
-            logger.error("Deploy blocked due to security findings: secrets=%d deps=%d for %s",
-                          len(secret_findings), len(dep_findings), project.slug)
+        all_findings = secret_findings + dep_findings + semgrep_findings
+        if _site.block_deploy_on_findings and all_findings:
+            logger.error("Deploy blocked due to security findings: secrets=%d deps=%d semgrep=%d for %s",
+                          len(secret_findings), len(dep_findings), len(semgrep_findings), project.slug)
             deployment.status = Deployment.Status.FAILED
-            deployment.error_message = f"Deploy blocked: {len(secret_findings)} secret(s) and {len(dep_findings)} dependency issue(s) found."
+            deployment.error_message = (
+                f"Deploy blocked: {len(secret_findings)} secret(s), "
+                f"{len(dep_findings)} dependency issue(s), "
+                f"{len(semgrep_findings)} static analysis issue(s) found."
+            )
             deployment.finished_at = dj_timezone.now()
             deployment.deploy_log_object_key = _tail_text(log_file)
             deployment.save(update_fields=['status', 'error_message', 'finished_at', 'deploy_log_object_key'])

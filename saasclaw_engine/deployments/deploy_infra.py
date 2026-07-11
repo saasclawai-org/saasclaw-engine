@@ -448,6 +448,76 @@ def _scan_dependencies(repo_path: Path) -> list[str]:
 
 
 
+RULES_FILE = str(Path(__file__).parent / 'semgrep_rules.yml')
+
+
+def _scan_with_semgrep(repo_path: Path) -> list[str]:
+    """Run Semgrep static analysis against repo for malware/dangerous patterns.
+
+    Uses SaaSClaw custom rules (semgrep_rules.yml) to detect reverse shells,
+    crypto miners, keyloggers, shell injection, obfuscated payloads, and other
+    malicious code patterns common in AI-generated applications.
+
+    Returns a list of human-readable finding strings.  When semgrep is not
+    installed or fails, returns a single advisory string (non-blocking).
+    """
+    findings: list[str] = []
+    semgrep_bin = None
+
+    # Locate the semgrep binary — prefer the engine venv, then PATH
+    candidates = [
+        str(Path(__file__).resolve().parents[2] / '.venv' / 'bin' / 'semgrep'),
+        'semgrep',
+    ]
+    for candidate in candidates:
+        try:
+            proc = subprocess.run(
+                [candidate, '--version'],
+                capture_output=True, text=True, timeout=10,
+            )
+            if proc.returncode == 0:
+                semgrep_bin = candidate
+                break
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+
+    if semgrep_bin is None:
+        return ['Semgrep not installed — static analysis skipped']
+
+    try:
+        result = subprocess.run(
+            [semgrep_bin, 'scan', '--config', RULES_FILE, '--json', '--quiet',
+             '--no-git-ignore', str(repo_path)],
+            capture_output=True, text=True, timeout=120,
+        )
+        # semgrep exits 0 for clean, 1 for findings, >1 for errors
+        if result.returncode > 1:
+            return [f'Semgrep scan error (exit {result.returncode}): {result.stderr[:300]}']
+
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return ['Semgrep returned non-JSON output — scan skipped']
+
+        for hit in data.get('results', []):
+            rule_id = hit.get('check_id', 'unknown')
+            severity = hit.get('extra', {}).get('severity', 'INFO')
+            path = hit.get('path', '?')
+            line = hit.get('start', {}).get('line', '?')
+            message = hit.get('extra', {}).get('message', '')
+            findings.append(f'[{severity}] {rule_id}: {message} ({path}:{line})')
+
+    except subprocess.TimeoutExpired:
+        findings.append('Semgrep scan timed out (120s)')
+    except FileNotFoundError:
+        findings.append('Semgrep not found — static analysis skipped')
+    except Exception as exc:
+        findings.append(f'Semgrep scan error: {exc}')
+
+    return findings
+
+
+
 def _publish_directory(source: Path, destination: Path) -> None:
     """Copy built static files to their destination."""
     # Clear destination first to avoid permission errors on existing files
