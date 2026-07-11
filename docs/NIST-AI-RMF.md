@@ -47,6 +47,7 @@ This document maps SaaSClaw Engine's technical controls to the [NIST AI RMF 1.0]
 |---------|---------------|
 | Secret detection patterns | `_scan_for_secrets()` scans for 10 credential types: AWS keys, GitHub tokens, GitLab tokens, private keys, DB connection strings, API keys, OpenAI keys, passwords |
 | Dependency vulnerability scanning | `_scan_dependencies()` runs `npm audit` and `pip check` for known CVEs |
+| Malware & dangerous code detection | `_scan_with_semgrep()` runs 15 custom Semgrep rules targeting reverse shells, crypto miners, keyloggers, shell injection, eval/exec abuse, obfuscated payloads, data exfiltration, credential harvesting, and shellcode execution |
 | File size limits | `.saasclaw` config enforces per-file line limits to prevent monolithic, hard-to-audit code |
 
 ### MAP 1.2: Categorizing AI Systems
@@ -91,8 +92,9 @@ This document maps SaaSClaw Engine's technical controls to the [NIST AI RMF 1.0]
 
 | Control | Implementation |
 |---------|---------------|
-| 365 automated tests | Tests cover secret scanning, PII detection, deploy pipeline, form API security, database console access control |
+| 591 automated tests | Tests cover secret scanning, PII detection, deploy pipeline, form API security, database console access control |
 | Secret scanner tests | 9 tests verify detection of AWS keys, GitHub PATs, private keys, DB strings, and that `.git`/`node_modules` are skipped |
+| Semgrep scanner tests | 5 tests verify malware detection (reverse shells, eval injection), clean code handling, rules file validity, and safe error handling |
 | PII guard tests | 102 tests verify detection and redaction of all PII categories, edge cases, and multi-format inputs |
 | Deploy pipeline tests | 19 tests verify env file parsing, credential naming, and Postgres isolation |
 
@@ -151,6 +153,7 @@ All governance controls are configurable via `SiteSettings` (singleton model, ad
 | `secret_scan_enabled` | `True` | MAP 1.1 | Scan code for secrets during deploy |
 | `dependency_scan_enabled` | `True` | MAP 1.1 | Run npm audit / pip check during deploy |
 | `block_deploy_on_findings` | `False` | MANAGE 1.1 | Block deploy on security findings (advisory by default) |
+| `semgrep_scan_enabled` | `True` | MAP 1.1 | Run Semgrep static analysis during deploy for malware detection |
 | `ai_disclosure_required` | `True` | GOVERN 1.5 | Require AI content disclosure checkbox |
 | `pii_guard_enabled` | `True` | MAP 1.5 | Redact PII before LLM API calls |
 | `default_require_gateway` | `False` | GOVERN 1.6 | Default new projects to on-server LLM gateway |

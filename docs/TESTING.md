@@ -50,7 +50,7 @@ Tests use SQLite (no real database needed) and mock external services. Every tes
 |------|-------|--------|
 | `test_utils.py` | 31 | Env file parsing/serialization, command execution helpers |
 | `test_service.py` | 19 | Env file loading edge cases, `_serialize_env_file` sorting, Postgres credential naming from slugs (truncation, uniqueness) |
-| `test_pipeline.py` | 30 | Secret scanner patterns (AWS, GitHub PAT, private keys, DB strings, OpenAI), directory skipping (.git, node_modules); `_tail_text` truncation; `_slugify_system_name` edge cases; `_normalize_repo_url` SSH/HTTPS conversion |
+| `test_pipeline.py` | 35 | Secret scanner patterns (AWS, GitHub PAT, private keys, DB strings, OpenAI), directory skipping (.git, node_modules); `_tail_text` truncation; `_slugify_system_name` edge cases; `_normalize_repo_url` SSH/HTTPS conversion; Semgrep malware detection (reverse shells, eval injection, rules file validity) |
 
 ### Integrations (`integrations/tests/`)
 
@@ -74,7 +74,7 @@ Tests use SQLite (no real database needed) and mock external services. Every tes
 
 ## Totals
 
-**389 tests passing** across 17 test files.
+**591 tests passing** across 17 test files.
 
 ## Writing New Tests
 

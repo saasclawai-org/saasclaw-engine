@@ -16,6 +16,7 @@ SaaSClaw Engine is the backend that powers [SaaSClaw](https://saasclaw.ai). It p
 - **Risk Tier Classification** — Automatic Low/Medium/High/Critical risk assignment based on data sensitivity
 - **Secret Scanning** — Deploy pipeline detects AWS keys, GitHub tokens, private keys, and other secrets in committed code
 - **Dependency Scanning** — Automated vulnerability scanning (`npm audit`, `pip check`) during deploy
+- **Static Analysis (Semgrep)** — Custom Semgrep ruleset scans every deploy for malware and dangerous code patterns: reverse shells, crypto miners, keyloggers, shell injection, eval/exec abuse, obfuscated payloads, data exfiltration, credential harvesting, and shellcode execution
 - **Decommissioning** — Safe project decommissioning with systemd cleanup, nginx removal, and audit logging
 - **Per-Project Databases** — Auto-provisioned PostgreSQL databases for each deployed project
 - **Form API** — Static sites can submit form data via a secure API endpoint (no backend needed)
@@ -596,6 +597,7 @@ SaaSClaw Engine is the open-source alternative to closed AI app builders. When y
 | **Form API for static sites** | ✅ | ❌ | ❌ | ❌ |
 | **PII redaction** | ✅ Presidio + regex fallback | ❌ | ❌ | ❌ |
 | **Prompt injection defense** | ✅ 1094 patterns, 23 languages | ❌ | ❌ | ❌ |
+| **Malware detection (Semgrep)** | ✅ 15 custom rules | ❌ | ❌ | ❌ |
 
 With SaaSClaw self-hosted, your only costs are the infrastructure you already run and whatever LLM API fees you already pay. No subscriptions, no credits, no token packages to purchase.
 
@@ -603,7 +605,7 @@ With SaaSClaw self-hosted, your only costs are the infrastructure you already ru
 
 ## Testing
 
-576 tests across 16 test files.
+591 tests across 16 test files.
 
 ```bash
 python -m pytest           # run all

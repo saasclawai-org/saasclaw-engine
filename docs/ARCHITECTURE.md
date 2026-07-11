@@ -173,11 +173,12 @@ The deploy pipeline (in `saasclaw_engine/deployments/service.py`) runs outside t
 
 Deploy steps:
 1. `git add -A && git commit` (as `saasclaw` user with deploy SSH key)
-2. Build (`npm run build` / `python manage.py collectstatic` / `dotnet publish`)
-3. Copy built output to `runtime/<env>/web/`
-4. Configure systemd service and nginx vhost
-5. Health check (wait for HTTP 200)
-6. Mark deployment as successful
+2. **Security scans**: secret scanning, dependency scanning, Semgrep static analysis
+3. Build (`npm run build` / `python manage.py collectstatic` / `dotnet publish`)
+4. Copy built output to `runtime/<env>/web/`
+5. Configure systemd service and nginx vhost
+6. Health check (wait for HTTP 200)
+7. Mark deployment as successful
 
 ## Content Safety
 
@@ -218,6 +219,7 @@ All user input is scanned using the [sunglasses](https://github.com/sunglasses-d
 | **Network isolation** | Containers have no network | Yes, every sandbox |
 | **URL allowlist** | Restricts web_fetch to known docs | Yes, every fetch |
 | **Command blocklist** | Blocks dangerous shell commands | Yes, as safety net |
+| **Semgrep static analysis** | Scans for malware/dangerous code before deploy | Yes, every deploy |
 
 ## Security Notes
 
