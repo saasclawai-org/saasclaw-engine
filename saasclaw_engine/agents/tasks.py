@@ -4,7 +4,12 @@ from saasclaw_engine.deployments.service import deploy_preview, deploy_productio
 
 
 @shared_task(bind=True, queue="deploy")
-def run_preview_deploy_job(self, project_id: int, user_id: int | None = None) -> int:
+def run_preview_deploy_job(self, project_id: int, user_id: int | None = None, session_id: str | None = None) -> int:
+    """Deploy project to preview.
+
+    If session_id is provided and the deploy fails, build errors are injected
+    back into the wizard session as an AgentMessage so the agent can self-correct.
+    """
     import logging, traceback
     logger = logging.getLogger(__name__)
     from django.contrib.auth import get_user_model
@@ -17,9 +22,62 @@ def run_preview_deploy_job(self, project_id: int, user_id: int | None = None) ->
         deployment = deploy_preview(project, triggered_by=user)
         # Queue async screenshot after successful deploy
         take_screenshot.delay(project.slug)
+
+        # Notify the wizard session of successful deploy
+        if session_id:
+            try:
+                from saasclaw_engine.studio_models.models import AgentMessage
+                AgentMessage.objects.create(
+                    session_id=session_id,
+                    role="assistant",
+                    content=f"✅ **Deploy succeeded.** Your changes are live at https://{project.slug}.preview.saasclaw.ai/",
+                    tool_call={"_deploy_success": True},
+                )
+            except Exception:
+                pass
+
         return deployment.id
     except Exception as exc:
         logger.error("Deploy task failed:\n%s", traceback.format_exc())
+
+        # Feed build errors back into the wizard session so the agent can self-correct
+        if session_id:
+            try:
+                from saasclaw_engine.studio_models.models import AgentMessage
+                error_text = str(exc)
+                # Keep it concise — extract the most useful part of the error
+                lines = error_text.split('\n')
+                useful_lines = []
+                for line in lines:
+                    stripped = line.strip()
+                    if any(kw in stripped.lower() for kw in [
+                        'error:', 'failed', 'cannot find', 'module not found',
+                        'syntaxerror', 'typeerror', 'referenceerror',
+                        'is not defined', 'unexpected', 'npm err',
+                        'building', 'command failed', 'no such file',
+                        'import error', 'migration',
+                    ]):
+                        useful_lines.append(stripped)
+                if useful_lines:
+                    summary = '\n'.join(useful_lines[:15])
+                else:
+                    summary = error_text[:2000]
+
+                AgentMessage.objects.create(
+                    session_id=session_id,
+                    role="assistant",
+                    content=(
+                        "🔴 **Build failed during deploy.** The error was:\n\n"
+                        f"```\n{summary}\n```\n\n"
+                        "Fix the issue above and deploy again. "
+                        "Use web_search to look up unfamiliar errors."
+                    ),
+                    tool_call={"_build_error": True},
+                )
+                logger.info("Injected build error feedback into session %s", session_id)
+            except Exception as inject_exc:
+                logger.warning("Failed to inject build error into session %s: %s", session_id, inject_exc)
+
         # Re-raise with the full error message so the wizard agent can read
         # the actual build/compile errors and attempt to fix them.
         raise RuntimeError(str(exc)) from exc
