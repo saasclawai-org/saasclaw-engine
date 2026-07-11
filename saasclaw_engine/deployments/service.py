@@ -155,6 +155,14 @@ def _deploy_environment(project: Project, environment_name: str, triggered_by=No
 
         _set_deploy_phase(deployment, 'deploy', 'Configuring nginx & restarting service')
         _set_deploy_phase(deployment, 'health', 'Running health check')
+        # Run smoke tests against deployed app
+        from saasclaw_engine.deployments.smoke_tests import smoke_test_deploy
+        base_url = f"https://{project.slug}.{settings.PREVIEW_BASE_DOMAIN}" if environment_name == "preview" else f"https://{environment.domain}"
+        smoke = smoke_test_deploy(base_url, framework=environment.runtime_kind, max_wait=15)
+        deployment.metadata_json = {**(deployment.metadata_json or {}), "smoke_tests": smoke}
+        deployment.save(update_fields=["metadata_json"])
+        if not smoke.get("healthy"):
+            logger.warning("Smoke tests failed for %s: %s", project.slug, smoke.get("error", "unknown"))
         deployment.status = Deployment.Status.SUCCEEDED
         deployment.finished_at = dj_timezone.now()
         deployment.metadata_json = {**(deployment.metadata_json or {}), 'current_phase': 'done'}

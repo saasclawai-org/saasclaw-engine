@@ -246,3 +246,104 @@ def take_screenshot(slug: str) -> bool:
     except Exception:
         logger.warning('Screenshot failed for %s:\n%s', slug, traceback.format_exc())
         return False
+
+
+@shared_task
+def check_trial_expiry():
+    """Check for trials expiring soon and send email notifications.
+
+    Sends emails at:
+    - 3 days before expiry ("ending soon")
+    - 1 day before expiry ("last day")
+    - On expiry ("trial ended")
+
+    Also downgrades expired trials to free plan.
+    """
+    import logging
+    from datetime import timedelta
+    from django.utils import timezone
+    from django.template.loader import render_to_string
+    from django.core.mail import send_mail
+    from django.conf import settings
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        from accounts.models import Subscription
+    except ImportError:
+        logger.warning("accounts.models not available, skipping trial check")
+        return
+
+    now = timezone.now()
+
+    # 3-day warning
+    for sub in Subscription.objects.filter(
+        status='trialing',
+        trial_end__gte=now + timedelta(days=2),
+        trial_end__lte=now + timedelta(days=4),
+    ):
+        _send_trial_email(sub, days_left=3)
+
+    # 1-day warning
+    for sub in Subscription.objects.filter(
+        status='trialing',
+        trial_end__gte=now + timedelta(hours=12),
+        trial_end__lte=now + timedelta(days=2),
+    ):
+        _send_trial_email(sub, days_left=1)
+
+    # Expired — downgrade and notify
+    for sub in Subscription.objects.filter(
+        status='trialing',
+        trial_end__lt=now,
+    ):
+        sub.status = 'active'
+        sub.plan = 'free'
+        sub.save(update_fields=['status', 'plan'])
+        _send_trial_email(sub, days_left=0)
+        logger.info("Trial expired for %s, downgraded to free", sub.user.username)
+
+    return "done"
+
+
+def _send_trial_email(sub, days_left):
+    """Send a trial expiry notification email."""
+    import logging
+    from django.template.loader import render_to_string
+    from django.core.mail import send_mail
+    from django.conf import settings
+
+    logger = logging.getLogger(__name__)
+
+    if not sub.user.email:
+        logger.warning("No email for user %s, skipping trial notification", sub.user.username)
+        return
+
+    subject = "Your SaaSClaw trial is ending soon" if days_left > 0 else "Your SaaSClaw trial has ended"
+
+    try:
+        html_body = render_to_string('emails/trial_expiring.html', {
+            'user': sub.user,
+            'trial_end': sub.trial_end,
+            'days_left': days_left,
+        })
+    except Exception:
+        # Template not found — send plain text
+        if days_left > 0:
+            text = f"Hi {sub.user.username},\n\nYour SaaSClaw free trial ends in {days_left} day(s).\nUpgrade to Pro at https://saasclaw.ai/pricing/\n\nSaaSClaw"
+        else:
+            text = f"Hi {sub.user.username},\n\nYour SaaSClaw free trial has ended. You've been moved to the Free plan.\nUpgrade to Pro at https://saasclaw.ai/pricing/\n\nSaaSClaw"
+        html_body = None
+
+    try:
+        send_mail(
+            subject=subject,
+            message=text if html_body is None else "",
+            html_message=html_body,
+            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'saasclaw@gmail.com'),
+            recipient_list=[sub.user.email],
+            fail_silently=True,
+        )
+        logger.info("Sent trial email to %s (%d days left)", sub.user.email, days_left)
+    except Exception as exc:
+        logger.warning("Failed to send trial email to %s: %s", sub.user.email, exc)
