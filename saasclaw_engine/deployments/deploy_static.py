@@ -138,6 +138,18 @@ def _deploy_static_environment(project: Project, environment: Environment, deplo
 
     # --- Framework-specific build env ---
     build_env = {}
+
+    # Inject DB-stored env vars into build environment (Vite needs VITE_* at build time)
+    from saasclaw_engine.deployments.models import EnvironmentVariable
+    for ev in EnvironmentVariable.objects.filter(environment=environment):
+        build_env[ev.key] = ev.value
+    # Also inject into repo .env so Vite picks them up automatically
+    if build_env:
+        repo_env_for_build = dict(repo_env)
+        for ev in EnvironmentVariable.objects.filter(environment=environment):
+            repo_env_for_build[ev.key] = ev.value
+        _write_text(repo_path / '.env', _serialize_env_file(repo_env_for_build))
+
     is_hugo = 'hugo' in (build_cmd or '').lower() or (repo_path / 'hugo.toml').exists()
     is_node = (repo_path / 'package.json').exists()
 
