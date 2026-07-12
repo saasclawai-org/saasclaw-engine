@@ -559,6 +559,20 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "supabase_sql",
+            "description": "Execute SQL (CREATE TABLE, INSERT, ALTER, etc.) against the project's Supabase database. Requires SUPABASE_DB_PASSWORD env var to be set. Use this to create tables, set up RLS policies, or run migrations automatically.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {"type": "string", "description": "SQL to execute. Can include multiple statements separated by semicolons."},
+                },
+                "required": ["sql"],
+            },
+        },
+    },
 ]
 
 

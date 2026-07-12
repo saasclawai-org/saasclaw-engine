@@ -1030,6 +1030,104 @@ def _project_slug_from_workspace(workspace_path: str) -> str:
     return ''
 
 
+def supabase_sql(workspace_path: str, sql: str) -> str:
+    """Execute SQL against the project's Supabase database via direct Postgres connection.
+    
+    Requires SUPABASE_DB_PASSWORD env var to be set. The project ref is extracted
+    from VITE_SUPABASE_URL. Connects to db.<ref>.supabase.co:5432 as postgres.
+    """
+    try:
+        import django
+        _os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+        django.setup()
+        from saasclaw_engine.deployments.models import EnvironmentVariable, Environment
+        from saasclaw_engine.projects.models import Project
+
+        slug = _project_slug_from_workspace(workspace_path)
+        if not slug:
+            return "Error: Could not determine project slug from workspace."
+
+        project = Project.objects.filter(slug=slug).first()
+        if not project:
+            return f"Error: Project '{slug}' not found."
+
+        # Gather env vars from all environments
+        env_vars = {}
+        for env in Environment.objects.filter(project=project):
+            for ev in EnvironmentVariable.objects.filter(environment=env):
+                if ev.key not in env_vars:
+                    env_vars[ev.key] = ev.value
+
+        # Also check repo .env and runtime .env
+        for env_file_path in [
+            os.path.join(project.workspace_root, 'repo', '.env'),
+            os.path.join(project.workspace_root, 'runtime', 'preview', '.env'),
+        ]:
+            if os.path.isfile(env_file_path):
+                with open(env_file_path) as f:
+                    for line in f:
+                        line = line.strip()
+                        if '=' in line and not line.startswith('#'):
+                            k, _, v = line.partition('=')
+                            if k.strip() not in env_vars:
+                                env_vars[k.strip()] = v.strip()
+
+        db_password = env_vars.get('SUPABASE_DB_PASSWORD')
+        if not db_password:
+            return ("Error: SUPABASE_DB_PASSWORD not set. Ask the user for their Supabase "
+                    "database password (found in Supabase dashboard → Project Settings → Database). "
+                    "Then set it with set_env_var.")
+
+        # Extract project ref from Supabase URL
+        supabase_url = env_vars.get('VITE_SUPABASE_URL', '')
+        # URL format: https://<project-ref>.supabase.co
+        import re
+        ref_match = re.match(r'https?://([a-z0-9]+)\.supabase\.(co|in|red)', supabase_url)
+        if not ref_match:
+            return f"Error: Could not extract project ref from VITE_SUPABASE_URL='{supabase_url}'"
+        project_ref = ref_match.group(1)
+
+        # Connect and execute using psycopg (v3)
+        import psycopg
+        db_host = f'db.{project_ref}.supabase.co'
+        conn = psycopg.connect(
+            host=db_host,
+            port=5432,
+            dbname='postgres',
+            user='postgres',
+            password=db_password,
+            connect_timeout=10,
+        )
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql)
+                    # Try to fetch results for SELECT/RETURNING queries
+                    try:
+                        rows = cur.fetchall()
+                        col_names = [desc[0] for desc in cur.description] if cur.description else []
+                        result_lines = []
+                        if col_names:
+                            result_lines.append(' | '.join(col_names))
+                            result_lines.append('-' * (len(' | '.join(col_names))))
+                            for row in rows[:50]:
+                                result_lines.append(' | '.join(str(v) for v in row))
+                            if len(rows) > 50:
+                                result_lines.append(f'... ({len(rows)} total rows)')
+                        if cur.rowcount > 0 and not rows:
+                            result_lines.append(f'{cur.rowcount} row(s) affected.')
+                        return '\n'.join(result_lines) if result_lines else 'OK (no rows returned)'
+                    except psycopg.ProgrammingError:
+                        # No results to fetch (DDL, INSERT without RETURNING, etc.)
+                        return f'OK ({cur.rowcount} row(s) affected)' if cur.rowcount >= 0 else 'OK'
+        finally:
+            conn.close()
+    except psycopg.OperationalError as exc:
+        return f"Error connecting to Supabase DB: {exc}"
+    except Exception as exc:
+        return f"Error executing SQL: {exc}"
+
+
 def update_todos(workspace_path: str, items: list) -> str:
     """Sync the project todo list. items = [{text, done}, ...]"""
     try:
@@ -1325,6 +1423,7 @@ def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = 
         "poll_command": lambda: poll_command(workspace_path, args.get("job_id", "")),
         "spawn_subtask": lambda: spawn_subtask(workspace_path, args.get("task", ""), args.get("model", "")),
         "check_subtask": lambda: check_subtask(workspace_path, args.get("task_id", "")),
+        "supabase_sql": lambda: supabase_sql(workspace_path, args.get("sql", "")),
     }
     handler = handlers.get(name)
     if not handler:
