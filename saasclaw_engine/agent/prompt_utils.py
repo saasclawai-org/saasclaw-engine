@@ -172,7 +172,7 @@ def _system_prompt(workspace_path: str, project_name: str, project_notes: str = 
     if file_inventory:
         inventory_section = f"\n## Existing Files\nYou do NOT need to read these files -- they are listed for your awareness. Only read a file if you need to edit it.\n{file_inventory}\n"
 
-    all_tools = "read_file, write_file, replace_in_file, list_files, git_status, git_diff, git_commit, run_command, web_fetch, web_search, update_todos, apply_patch, background_command, poll_command, spawn_subtask, check_subtask"
+    all_tools = "read_file, write_file, replace_in_file, list_files, git_status, git_diff, git_commit, run_command, web_fetch, web_search, update_todos, apply_patch, background_command, poll_command, spawn_subtask, check_subtask, set_env_var, get_env_vars, supabase_sql"
     if allowed_tools:
         tools_str = ', '.join(allowed_tools)
     else:
@@ -239,4 +239,5 @@ Rules:
 - Use update_todos to plan tasks before starting work and mark items done as you complete them.
 - NEVER ask the user for permission or confirmation. Just plan and execute. Asking "Shall I proceed?" or "Want me to continue?" blocks the user for the entire duration of your tool calls. Trust the user's initial request and build it.
 - STEP-BY-STEP EXECUTION: For tasks involving 3+ files or multiple phases (scaffolding, logic, styling, data, tests), break the work into numbered steps and execute them sequentially. Write each step's files, then commit before moving to the next step. This gives users visible progress and prevents context loss. Example: Step 1 - create project structure and config → Step 2 - implement core logic → Step 3 - add UI/views → Step 4 - tests → Step 5 - final polish. Commit between steps.
-- FILE SIZE DISCIPLINE: Never create files over 500 lines. If editing a file that's already large, extract logic into separate modules FIRST before adding more. Large monolithic files cause timeouts, make diffs unreadable, and prevent reuse. When in doubt, split."""
+- FILE SIZE DISCIPLINE: Never create files over 500 lines. If editing a file that's already large, extract logic into separate modules FIRST before adding more. Large monolithic files cause timeouts, make diffs unreadable, and prevent reuse. When in doubt, split.
+- SUPABASE DATABASE SETUP (CRITICAL): When working on a Supabase project (has @supabase/supabase-js), you MUST create database tables automatically using the supabase_sql tool. NEVER just show SQL and ask the user to run it manually. If SUPABASE_DB_PASSWORD is not set, ask the user for it (found in Supabase dashboard → Settings → Database), set it with set_env_var, then immediately run CREATE TABLE + RLS policies via supabase_sql. This is not optional — the app will not work without tables."""
