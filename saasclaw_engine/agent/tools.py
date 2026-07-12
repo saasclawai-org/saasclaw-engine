@@ -936,45 +936,80 @@ def get_env_vars(workspace_path: str) -> str:
 
 
 def set_env_var(workspace_path: str, key: str, value: str, is_secret: bool = True) -> str:
-    """Set an env var — writes to .env file in the runtime dir."""
+    """Set an env var — writes to DB EnvironmentVariable, repo .env, and runtime .env."""
     try:
-        # Derive the runtime .env path from the workspace
-        # workspace_path = /srv/saasclaw/workspaces/<uuid>
-        # The worktree's .git file points to the parent repo
+        import django
+        _os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+        django.setup()
+        from saasclaw_engine.deployments.models import EnvironmentVariable, Environment
+        from saasclaw_engine.projects.models import Project
+
         git_file = os.path.join(workspace_path, '.git')
+        slug = None
         if os.path.isfile(git_file):
             with open(git_file) as f:
                 git_content = f.read().strip()
-            # Extract commondir or gitdir to find the project repo
-            # gitdir: /srv/saasclaw/projects/<slug>/repo/.git/worktrees/<uuid>
             if 'gitdir' in git_content:
                 gitdir = git_content.split('gitdir:')[-1].strip()
-                # Navigate to find project slug
                 parts = gitdir.split('/')
-                # Find 'projects' in path
                 if 'projects' in parts:
                     idx = parts.index('projects')
                     if idx + 1 < len(parts):
                         slug = parts[idx + 1]
-                        env_file = f'/srv/saasclaw/projects/{slug}/runtime/preview/.env'
-                        # Read existing
-                        existing = {}
-                        if os.path.isfile(env_file):
-                            with open(env_file) as f:
-                                for line in f:
-                                    line = line.strip()
-                                    if '=' in line and not line.startswith('#'):
-                                        k, _, v = line.partition('=')
-                                        existing[k.strip()] = v.strip()
-                        existing[key] = value
-                        # Write back
-                        os.makedirs(os.path.dirname(env_file), exist_ok=True)
-                        with open(env_file, 'w') as f:
-                            for k, v in sorted(existing.items()):
-                                f.write(f'{k}={v}\n')
-                        display = '••••••••' if is_secret else value[:20]
-                        return f"Set {key}={display} in {env_file}"
-        return f"Could not determine project from workspace. Set {key} manually in the Studio UI."
+
+        if not slug:
+            return f"Could not determine project from workspace. Set {key} manually in the Studio UI."
+
+        project = Project.objects.filter(slug=slug).first()
+        if not project:
+            return f"Project '{slug}' not found."
+
+        actions = []
+
+        # 1. Write to DB EnvironmentVariable (used by deploy pipeline)
+        for env in Environment.objects.filter(project=project):
+            EnvironmentVariable.objects.update_or_create(
+                environment=env, key=key,
+                defaults={'value': value, 'is_secret': is_secret, 'project': project},
+            )
+        actions.append('DB')
+
+        # 2. Write to repo .env (Vite reads this at build time)
+        repo_env_file = os.path.join(project.workspace_root, 'repo', '.env')
+        existing = {}
+        if os.path.isfile(repo_env_file):
+            with open(repo_env_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if '=' in line and not line.startswith('#'):
+                        k, _, v = line.partition('=')
+                        existing[k.strip()] = v.strip()
+        existing[key] = value
+        os.makedirs(os.path.dirname(repo_env_file), exist_ok=True)
+        with open(repo_env_file, 'w') as f:
+            for k, v in sorted(existing.items()):
+                f.write(f'{k}={v}\n')
+        actions.append('repo .env')
+
+        # 3. Write to runtime .env (for already-running instances)
+        runtime_env_file = os.path.join(project.workspace_root, 'runtime', 'preview', '.env')
+        existing_rt = {}
+        if os.path.isfile(runtime_env_file):
+            with open(runtime_env_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if '=' in line and not line.startswith('#'):
+                        k, _, v = line.partition('=')
+                        existing_rt[k.strip()] = v.strip()
+        existing_rt[key] = value
+        os.makedirs(os.path.dirname(runtime_env_file), exist_ok=True)
+        with open(runtime_env_file, 'w') as f:
+            for k, v in sorted(existing_rt.items()):
+                f.write(f'{k}={v}\n')
+        actions.append('runtime .env')
+
+        display = '••••••••' if is_secret else value[:20]
+        return f"Set {key}={display} in: {', '.join(actions)}"
     except Exception as exc:
         return f"Error setting env var: {exc}"
 
