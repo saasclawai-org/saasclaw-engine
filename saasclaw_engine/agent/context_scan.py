@@ -290,7 +290,7 @@ def _scan_codebase_context(workspace_path: str) -> str:
     # --- Phase 4: Scan source files for types and imports ---
     import glob as _glob
     source_files = []
-    for ext in ["*.py", "*.ts", "*.tsx", "*.js", "*.jsx", "*.go", "*.rs"]:
+    for ext in ["*.py", "*.ts", "*.tsx", "*.js", "*.jsx", "*.cs", "*.go", "*.rs"]:
         source_files.extend(_glob.glob(os.path.join(workspace_path, ext)))
         for d in source_dirs:
             source_files.extend(_glob.glob(os.path.join(workspace_path, d, "**", ext), recursive=True))
@@ -312,6 +312,15 @@ def _scan_codebase_context(workspace_path: str) -> str:
                         type_defs.append(rel + ": " + line.split("#")[0].strip())
                     elif line.startswith("export interface "):
                         type_defs.append(rel + ": " + line.split("{")[0].strip())
+                    # C# type extraction
+                    elif line.startswith("public class ") or line.startswith("public record "):
+                        cs_type = line.split("{")[0].strip().rstrip(":").rstrip()
+                        if cs_type:
+                            type_defs.append(rel + ": " + cs_type)
+                    elif line.startswith("using ") and ";" in line:
+                        mod = line.split("using ")[1].split(";")[0].strip()
+                        if mod and not mod.startswith("System") and not mod.startswith("Microsoft"):
+                            local_imports.append(mod)
                     # Local imports
                     elif line.startswith("from " + Q + "@/"):
                         mod = line.split(Q)[1] if Q in line else ""
@@ -420,6 +429,21 @@ def _scan_codebase_context(workspace_path: str) -> str:
         hints.append("- New game/feature: src/components/GameName.tsx + src/lib/gameName.ts + import in page.tsx")
         hints.append("- If page.tsx is already 150+ lines: REFACTOR by extracting to lib/ and components/ BEFORE adding more.")
         hints.append("- Multiple sub-views: create src/components/GameName/ directory with separate files.")
+
+    # --- Phase 5b2: .NET / EF Core conventions ---
+    if project_type == ".NET":
+        hints.append("")
+        hints.append(".NET / EF Core conventions (CRITICAL):")
+        hints.append("- Each entity/model class in its own .cs file, NOT all in one file.")
+        hints.append("- ALWAYS add [JsonIgnore] on navigation properties (e.g. public Provider? Provider) to prevent JSON serialization cycles.")
+        hints.append("- ALWAYS use .Include() when querying entities with navigation properties to eager-load related data.")
+        hints.append("- Use db.Database.Migrate() for schema changes, NOT EnsureCreated(). EnsureCreated skips if __EFMigrationsHistory exists.")
+        hints.append("- Seed data in AppDbContext.OnModelCreating or a separate DbSeeder, NOT inline in Program.cs.")
+        hints.append("- Minimal API: group related endpoints with MapGroup, keep Program.cs under 200 lines, extract handlers.")
+        hints.append("- Use [Required], [MaxLength] attributes for validation on entity properties.")
+        hints.append("- Foreign keys: always define both the FK property (int ProviderId) and the navigation property (Provider? Provider).")
+        hints.append("- File size: never exceed 500 lines. Split Program.cs into separate files when it grows.")
+        hints.append("")
 
     # --- Phase 5c: Go conventions ---
     if project_type == "Go":

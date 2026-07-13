@@ -23,6 +23,7 @@ class Project(models.Model):
         NEXT_STATIC = 'next_static', 'Next.js Static'
         DJANGO = 'django', 'Django App'
         SUPABASE = 'supabase', 'React + Supabase'
+        FIREBASE = 'firebase', 'React + Firebase'
 
     class RepoProvider(models.TextChoices):
         GITHUB = 'github', 'GitHub'
