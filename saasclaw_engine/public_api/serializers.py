@@ -17,6 +17,11 @@ class RegisterSerializer(serializers.Serializer):
     password = serializers.CharField(min_length=8, write_only=True)
     name = serializers.CharField(required=False, max_length=200)
 
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('A user with this email already exists.')
+        return value
+
     def create(self, validated_data):
         email = validated_data['email']
         password = validated_data['password']
