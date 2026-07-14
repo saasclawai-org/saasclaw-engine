@@ -542,7 +542,7 @@ def run_command(workspace_path: str, command: str, timeout: int = 120) -> str:
         return f"Error: {exc}"
 
 
-def _deploy_project_tool(workspace_path: str, environment: str = "preview") -> str:
+def _deploy_project_tool(workspace_path: str, environment: str = "preview", session_id: str | None = None) -> str:
     """Deploy the project to preview or production.
     
     This triggers the SaaSClaw deploy pipeline:
@@ -633,8 +633,8 @@ def _deploy_project_tool(workspace_path: str, environment: str = "preview") -> s
         # Step 4: Deploy via celery task
         results.append(f"🚀 Deploying to {environment}...")
         try:
-            from agents.tasks import run_preview_deploy_job
-            task_result = run_preview_deploy_job.delay(project.id, ws.user.id)
+            from saasclaw_engine.agents.tasks import run_preview_deploy_job
+            task_result = run_preview_deploy_job.delay(project.id, ws.user.id, session_id=session_id)
             deployment_id = task_result.get(timeout=180)
             results.append(f"✅ Deploy task completed (id: {deployment_id})")
         except Exception as exc:
@@ -1383,7 +1383,7 @@ def _project_status_tool(workspace_path, section=""):
 
     return "\n".join(parts)
 
-def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = False) -> str:
+def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = False, session_id: str | None = None) -> str:
     """Dispatch a tool call by name.
     
     The 'restricted' flag is kept for backward compatibility but no longer
@@ -1412,7 +1412,7 @@ def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = 
         "test_api": lambda: _test_api_tool(workspace_path, args.get("url", ""), args.get("method", "GET"), args.get("headers"), args.get("body", "")),
         "db_command": lambda: _db_command_tool(workspace_path, args.get("command", ""), int(args.get("timeout", 60))),
         "project_status": lambda: _project_status_tool(workspace_path, args.get("section", "all")),
-        "deploy_project": lambda: _deploy_project_tool(workspace_path, args.get("environment", "preview")),
+        "deploy_project": lambda: _deploy_project_tool(workspace_path, args.get("environment", "preview"), session_id=session_id),
         "web_fetch": lambda: web_fetch(workspace_path, args.get("url", ""), args.get("max_chars", 5000)),
         "web_search": lambda: web_search(workspace_path, args.get("query", ""), args.get("count", 5)),
         "set_env_var": lambda: set_env_var(workspace_path, args.get("key", ""), args.get("value", ""), args.get("is_secret", True)),

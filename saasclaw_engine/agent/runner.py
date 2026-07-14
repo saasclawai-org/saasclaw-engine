@@ -237,7 +237,7 @@ def run_agent(
                             args = {}
                 else:
                     args = {}
-            tool_result = agent_tools.execute_tool(workspace_path, name, args, bool(profile_tools))
+            tool_result = agent_tools.execute_tool(workspace_path, name, args, bool(profile_tools), session_id=session_id)
             return (tc, name, raw_args, args, tool_result)
 
         # Filter tool calls that fit within the budget
