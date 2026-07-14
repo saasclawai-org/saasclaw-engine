@@ -1,0 +1,1 @@
+default_app_config = 'saasclaw_engine.public_api.apps.PublicApiConfig'
