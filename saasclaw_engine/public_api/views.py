@@ -625,10 +625,13 @@ def deploy_trigger(request, slug):
     results.append(f'📂 Web root: {web_root}')
 
     return Response({
+        'id': project.id,
         'status': 'completed',
         'result': '\n'.join(results),
         'url': f'https://{domain}',
         'web_root': web_root,
+        'environment': environment,
+        'created_at': project.updated_at.isoformat() if hasattr(project, 'updated_at') else '',
     })
 
 
@@ -640,33 +643,42 @@ def deploy_status(request, slug):
     if not project:
         return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    from saasclaw_engine.agent.tools import _project_status_tool
     workspace = project.workspace_root or f'/srv/saasclaw/projects/{slug}/repo'
-    result = _project_status_tool(workspace, 'service')
-    return Response({'status_text': result})
+    web_root = f'/srv/saasclaw/projects/{slug}/web'
+
+    # Check if web root exists
+    deployed = os.path.isdir(web_root) and os.listdir(web_root)
+
+    return Response({
+        'id': project.id,
+        'status': 'deployed' if deployed else 'not_deployed',
+        'url': f'https://{project.preview_domain}' if project.preview_domain else '',
+        'environment': 'preview',
+        'created_at': project.updated_at.isoformat() if hasattr(project, 'updated_at') else '',
+    })
 
 
 @api_view(['GET'])
 def deploy_history(request, slug):
-    """Get deploy history."""
+    """Get deploy history (simplified for starter app)."""
     user = _get_user(request)
     project = _get_project(slug, user)
     if not project:
         return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    from saasclaw_engine.deployments.models import Deployment
-    deployments = Deployment.objects.filter(
-        environment__project=project,
-    ).order_by('-created_at')[:20]
+    # Starter app doesn't have a Deployment model — return project status
+    web_root = f'/srv/saasclaw/projects/{slug}/web'
+    deployed = os.path.isdir(web_root) and os.path.exists(os.path.join(web_root, 'index.html'))
 
-    data = [{
-        'id': d.id,
-        'environment': d.environment.name,
-        'status': d.status,
-        'url': f'https://{project.preview_domain}' if project.preview_domain else '',
-        'created_at': d.created_at.isoformat(),
-    } for d in deployments]
-    return Response(data)
+    if deployed:
+        return Response([{
+            'id': 1,
+            'environment': 'preview',
+            'status': 'completed',
+            'url': f'https://{project.preview_domain}' if project.preview_domain else '',
+            'created_at': project.updated_at.isoformat() if hasattr(project, 'updated_at') else '',
+        }])
+    return Response([])
 
 
 # ---- Git ----
