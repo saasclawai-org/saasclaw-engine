@@ -601,8 +601,8 @@ def deploy_trigger(request, slug):
             results.append(f'✅ Copied {dist_dir}/ → {web_root}')
         except Exception as e:
             results.append(f'⚠️ Copy error: {e}')
-    elif os.path.isdir(os.path.join(workspace, 'index.html')):
-        # Single static file
+    elif os.path.isfile(os.path.join(workspace, 'index.html')):
+        # Static project — copy index.html to web root
         try:
             os.makedirs(web_root, exist_ok=True)
             shutil.copy2(os.path.join(workspace, 'index.html'), web_root)
@@ -619,8 +619,63 @@ def deploy_trigger(request, slug):
     project.preview_domain = f'{slug}.saasclaw.ai'
     project.save()
 
-    # Try to set up nginx for this project
+    # Auto-create nginx site config for this project
     domain = f'{slug}.saasclaw.ai'
+    nginx_conf = f'/etc/nginx/sites-available/{slug}'
+    if not os.path.exists(nginx_conf):
+        nginx_content = f'''server {{
+    listen 80;
+    listen [::]:80;
+    server_name {domain};
+    return 301 https://$host$request_uri;
+}}
+
+server {{
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name {domain};
+
+    ssl_certificate /etc/letsencrypt/live/saasclaw.ai/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/saasclaw.ai/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    client_max_body_size 25m;
+
+    root {web_root};
+    index index.html;
+
+    location / {{
+        try_files $uri $uri/ /index.html;
+    }}
+
+    location /assets/ {{
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }}
+
+    location ~ /\.\(env|git) {{
+        return 444;
+    }}
+}}
+'''
+        try:
+            with open(nginx_conf, 'w') as f:
+                f.write(nginx_content)
+            # Symlink to sites-enabled
+            enabled_link = f'/etc/nginx/sites-enabled/{slug}'
+            if not os.path.exists(enabled_link):
+                os.symlink(nginx_conf, enabled_link)
+            # Reload nginx
+            subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, timeout=10)
+            subprocess.run(['sudo', 'nginx', '-s', 'reload'], capture_output=True, timeout=10)
+            results.append(f'✅ Nginx site configured for {domain}')
+        except Exception as e:
+            results.append(f'⚠️ Could not auto-configure nginx: {e}')
+            results.append(f'📝 Manual: Create {nginx_conf} with web root {web_root}')
+    else:
+        results.append(f'✅ Nginx config already exists for {domain}')
+
     results.append(f'🌐 Deploy ready at https://{domain}')
     results.append(f'📂 Web root: {web_root}')
 
