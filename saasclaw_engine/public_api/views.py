@@ -1,7 +1,8 @@
 """Public API views — thin REST layer over existing engine tools and models.
 
 This is the API that the SaaSClaw Starter app consumes.
-All endpoints require JWT auth (or are open in SINGLE_USER mode).
+All endpoints require JWT auth. In SINGLE_USER mode, login requires
+a password (SAASCLAW_SINGLE_USER_PASSWORD env var).
 """
 import json
 import logging
@@ -14,8 +15,8 @@ from django.conf import settings
 from django.contrib.auth.models import User
 from django.http import StreamingHttpResponse
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes, authentication_classes
-from rest_framework.permissions import AllowAny as DRFAllowAny
+from rest_framework.decorators import api_view, permission_classes, authentication_classes, throttle_classes
+from rest_framework.permissions import AllowAny as DRFAllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -31,34 +32,67 @@ from .serializers import (
 
 logger = logging.getLogger(__name__)
 
-SINGLE_USER = getattr(settings, 'SAASCLAW_SINGLE_USER', False)
+def _is_single_user():
+    """Check if single-user mode is enabled (reads from settings at runtime)."""
+    return getattr(settings, 'SAASCLAW_SINGLE_USER', False)
 
 
-def _get_or_create_single_user():
-    """In single-user mode, return a default user."""
+def _get_single_user_password():
+    """Get the configured single-user password (reads from settings at runtime)."""
+    return getattr(settings, 'SAASCLAW_SINGLE_USER_PASSWORD', '')
+
+
+def _get_or_create_single_user(password=''):
+    """In single-user mode, return the default admin user.
+
+    Creates the user with the given password if they don't exist yet.
+    If password is empty, sets an unusable password (must use SINGLE_USER_PASSWORD env var).
+    """
     user = User.objects.filter(is_superuser=True).first()
     if not user:
         user = User.objects.create_superuser(
             username='admin',
             email='admin@saasclaw.local',
-            password='admin',
+            password=password or 'admin',
         )
+    elif password:
+        user.set_password(password)
+        user.save()
     return user
 
 
 def _get_user(request):
-    """Get the effective user — in single-user mode, always the admin."""
-    if SINGLE_USER:
+    """Get the effective user — in single-user mode, resolve to the admin user.
+
+    Even in SINGLE_USER mode, the request MUST have a valid JWT.
+    The difference is that the JWT can be for any user — we always resolve
+    to the admin user. This prevents unauthenticated access while keeping
+    the convenience of single-user mode.
+
+    If the user is not authenticated (AnonymousUser), this returns None,
+    which will cause _get_project to return a 404 error response.
+    """
+    if _is_single_user():
         return _get_or_create_single_user()
-    return request.user
+    if hasattr(request, 'user') and request.user.is_authenticated:
+        return request.user
+    return None
 
 
 def _get_project(slug, user):
-    """Look up a project owned by user, or 404."""
+    """Look up a project owned by user, or 404.
+
+    Returns (project, error_response) tuple.
+    If project is None, error_response contains the 404 Response to return.
+    This pattern ensures every endpoint handles the missing-project case
+    consistently and makes it harder to accidentally skip owner scoping.
+    """
+    if user is None:
+        return None, Response({'detail': 'Authentication required.'}, status=status.HTTP_401_UNAUTHORIZED)
     try:
-        return Project.objects.get(slug=slug, owner=user, deleted_at__isnull=True)
+        return Project.objects.get(slug=slug, owner=user, deleted_at__isnull=True), None
     except Project.DoesNotExist:
-        return None
+        return None, Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
 
 def _project_workspace(project):
@@ -69,14 +103,32 @@ def _project_workspace(project):
     return ws
 
 
+from rest_framework.throttling import SimpleRateThrottle
+
+
+class LoginRateThrottle(SimpleRateThrottle):
+    """Rate limit login attempts: 5 per minute per IP."""
+    scope = 'login'
+
+    def get_cache_key(self, request, view):
+        # Rate limit by IP address
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0].strip()
+        else:
+            ip = request.META.get('REMOTE_ADDR', '0.0.0.0')
+        return f'throttle_login_{ip}'
+
+
 # ---- Auth ----
 
 @api_view(['POST'])
 @permission_classes([DRFAllowAny])
 @authentication_classes([])
+@throttle_classes([LoginRateThrottle])
 def register_view(request):
     """Register a new user and return JWT tokens."""
-    if SINGLE_USER:
+    if _is_single_user():
         return Response(
             {'detail': 'Registration disabled in single-user mode.'},
             status=status.HTTP_403_FORBIDDEN,
@@ -94,10 +146,27 @@ def register_view(request):
 @api_view(['POST'])
 @permission_classes([DRFAllowAny])
 @authentication_classes([])
+@throttle_classes([LoginRateThrottle])
 def login_view(request):
     """Authenticate user and return JWT tokens."""
-    if SINGLE_USER:
-        user = _get_or_create_single_user()
+    if _is_single_user():
+        # Even in single-user mode, require a password.
+        # Use SAASCLAW_SINGLE_USER_PASSWORD env var to set the password.
+        # If not set, any non-empty password is accepted (for local dev only).
+        password = request.data.get('password', '')
+        if not password:
+            return Response(
+                {'detail': 'Password is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # If SINGLE_USER_PASSWORD is configured, enforce it
+        single_user_password = _get_single_user_password()
+        if single_user_password and password != single_user_password:
+            return Response(
+                {'detail': 'Invalid credentials.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        user = _get_or_create_single_user(password=password)
         refresh = RefreshToken.for_user(user)
         return Response({
             'access': str(refresh.access_token),
@@ -132,9 +201,12 @@ def login_view(request):
 # ---- Projects ----
 
 @api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def projects_list_create(request):
     """List user's projects or create a new one."""
     user = _get_user(request)
+    if user is None:
+        return Response({'detail': 'Authentication required.'}, status=status.HTTP_401_UNAUTHORIZED)
 
     if request.method == 'GET':
         projects = Project.objects.filter(owner=user, deleted_at__isnull=True)
@@ -188,12 +260,13 @@ def projects_list_create(request):
 
 
 @api_view(['GET', 'PATCH', 'DELETE'])
+@permission_classes([IsAuthenticated])
 def project_detail(request, slug):
     """Get, update, or delete a project."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     if request.method == 'GET':
         from saasclaw_engine.studio_models.models import Todo
@@ -220,12 +293,13 @@ def project_detail(request, slug):
 # ---- Files ----
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def files_list(request, slug):
     """List files in a project workspace."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     from saasclaw_engine.agent.tools import list_files
     workspace = project.workspace_root or f'/srv/saasclaw/projects/{slug}/repo'
@@ -238,12 +312,13 @@ def files_list(request, slug):
 
 
 @api_view(['GET', 'PUT'])
+@permission_classes([IsAuthenticated])
 def file_detail(request, slug, path):
     """Read or write a file in a project workspace."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     from saasclaw_engine.agent.tools import read_file, write_file
     workspace = project.workspace_root or f'/srv/saasclaw/projects/{slug}/repo'
@@ -260,12 +335,13 @@ def file_detail(request, slug, path):
 # ---- Chat Sessions ----
 
 @api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def sessions_list_create(request, slug):
     """List or create chat sessions for a project."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     from saasclaw_engine.studio_models.models import AgentSession, AgentMessage
 
@@ -306,12 +382,13 @@ def sessions_list_create(request, slug):
 
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def session_detail(request, slug, session_id):
     """Get session detail including messages."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     from saasclaw_engine.studio_models.models import AgentSession, AgentMessage
     try:
@@ -337,12 +414,13 @@ def session_detail(request, slug, session_id):
 # ---- Chat Send (SSE) ----
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def session_send(request, slug, session_id):
     """Send a message to an agent session and stream responses via SSE."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     from saasclaw_engine.studio_models.models import AgentSession, AgentMessage
     try:
@@ -465,12 +543,13 @@ def session_send(request, slug, session_id):
 # ---- Environment Variables ----
 
 @api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def env_list_create(request, slug):
     """List or set environment variables."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     if request.method == 'GET':
         from saasclaw_engine.agent.tools import get_env_vars
@@ -505,12 +584,13 @@ def env_list_create(request, slug):
 
 
 @api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
 def env_delete(request, slug, key):
     """Delete an environment variable."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     for env in Environment.objects.filter(project=project):
         EnvironmentVariable.objects.filter(environment=env, key=key).delete()
@@ -520,12 +600,13 @@ def env_delete(request, slug, key):
 # ---- Deploy ----
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def deploy_trigger(request, slug):
     """Trigger a deploy — build the project and serve it locally."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     workspace = project.workspace_root or f'/srv/saasclaw/projects/{slug}/repo'
     environment = request.data.get('environment', 'preview')
@@ -691,12 +772,13 @@ server {{
 
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def deploy_status(request, slug):
     """Get current deploy status."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     workspace = project.workspace_root or f'/srv/saasclaw/projects/{slug}/repo'
     web_root = f'/srv/saasclaw/projects/{slug}/web'
@@ -714,12 +796,13 @@ def deploy_status(request, slug):
 
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def deploy_history(request, slug):
     """Get deploy history (simplified for starter app)."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     # Starter app doesn't have a Deployment model — return project status
     web_root = f'/srv/saasclaw/projects/{slug}/web'
@@ -739,12 +822,13 @@ def deploy_history(request, slug):
 # ---- Git ----
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def git_status_view(request, slug):
     """Get git status."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     from saasclaw_engine.agent.tools import git_status
     workspace = project.workspace_root or f'/srv/saasclaw/projects/{slug}/repo'
@@ -753,12 +837,13 @@ def git_status_view(request, slug):
 
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def git_diff_view(request, slug):
     """Get git diff."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     from saasclaw_engine.agent.tools import git_diff
     workspace = project.workspace_root or f'/srv/saasclaw/projects/{slug}/repo'
@@ -768,12 +853,13 @@ def git_diff_view(request, slug):
 
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def git_commit_view(request, slug):
     """Commit changes."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     serializer = GitCommitSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -787,12 +873,13 @@ def git_commit_view(request, slug):
 # ---- Infrastructure ----
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def project_status(request, slug):
     """Read-only project infrastructure info."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     from saasclaw_engine.agent.tools import _project_status_tool
     workspace = project.workspace_root or f'/srv/saasclaw/projects/{slug}/repo'
@@ -802,12 +889,13 @@ def project_status(request, slug):
 
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def logs_view(request, slug, source):
     """Read server or deploy logs."""
     user = _get_user(request)
-    project = _get_project(slug, user)
-    if not project:
-        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
 
     from saasclaw_engine.agent.tools import _read_logs_tool
     lines = int(request.query_params.get('lines', 50))
