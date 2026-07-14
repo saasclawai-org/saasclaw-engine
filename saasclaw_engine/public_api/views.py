@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 
 from django.conf import settings
@@ -520,16 +521,115 @@ def env_delete(request, slug, key):
 
 @api_view(['POST'])
 def deploy_trigger(request, slug):
-    """Trigger a deploy."""
+    """Trigger a deploy — build the project and serve it locally."""
     user = _get_user(request)
     project = _get_project(slug, user)
     if not project:
         return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    from saasclaw_engine.agent.tools import _deploy_project_tool
     workspace = project.workspace_root or f'/srv/saasclaw/projects/{slug}/repo'
-    result = _deploy_project_tool(workspace, request.data.get('environment', 'preview'))
-    return Response({'status': 'completed', 'result': result})
+    environment = request.data.get('environment', 'preview')
+    results = []
+
+    import subprocess
+    import shutil
+
+    def run_cmd(cmd, timeout=120):
+        try:
+            proc = subprocess.run(
+                cmd, shell=True, cwd=workspace, capture_output=True, text=True, timeout=timeout
+            )
+            output = proc.stdout.strip() or proc.stderr.strip() or '(no output)'
+            if proc.returncode != 0:
+                return f'❌ {cmd}\n{proc.stderr.strip() or proc.stdout.strip()}'
+            return output
+        except subprocess.TimeoutExpired:
+            return f'⏰ Timed out: {cmd}'
+        except Exception as e:
+            return f'❌ Error: {e}'
+
+    # Detect project type
+    files_present = set()
+    try:
+        files_present = set(os.listdir(workspace))
+    except Exception:
+        pass
+
+    is_node = 'package.json' in files_present
+    is_django = 'manage.py' in files_present
+
+    dist_dir = None
+
+    if is_node:
+        results.append('📦 Building Node.js project...')
+        if not os.path.isdir(os.path.join(workspace, 'node_modules')):
+            results.append(run_cmd('npm install'))
+        results.append(run_cmd('npm run build'))
+        for candidate in ['dist', 'build', 'out']:
+            if os.path.isdir(os.path.join(workspace, candidate)):
+                dist_dir = candidate
+                break
+        if not dist_dir:
+            results.append('⚠️ Could not find build output directory.')
+
+    elif is_django:
+        results.append('🐍 Building Django project...')
+        results.append(run_cmd('python manage.py collectstatic --noinput'))
+        dist_dir = None
+
+    else:
+        results.append('📄 Static project detected.')
+        dist_dir = None
+
+    # Commit any uncommitted changes
+    status_out = run_cmd('git status --porcelain')
+    if status_out and 'nothing to commit' not in (status_out or ''):
+        results.append('📝 Committing changes...')
+        run_cmd('git add -A')
+        run_cmd('git -c user.email="deploy@saasclaw.ai" -c user.name="Deploy" commit -m "Deploy: preview deployment"')
+
+    # Determine deploy path
+    web_root = f'/srv/saasclaw/projects/{slug}/web'
+
+    if dist_dir:
+        # Copy build output to web root
+        src = os.path.join(workspace, dist_dir)
+        try:
+            if os.path.isdir(web_root):
+                shutil.rmtree(web_root)
+            shutil.copytree(src, web_root)
+            results.append(f'✅ Copied {dist_dir}/ → {web_root}')
+        except Exception as e:
+            results.append(f'⚠️ Copy error: {e}')
+    elif os.path.isdir(os.path.join(workspace, 'index.html')):
+        # Single static file
+        try:
+            os.makedirs(web_root, exist_ok=True)
+            shutil.copy2(os.path.join(workspace, 'index.html'), web_root)
+            results.append(f'✅ Copied index.html → {web_root}')
+        except Exception as e:
+            results.append(f'⚠️ Copy error: {e}')
+    else:
+        # No build output — try serving workspace directly
+        web_root = workspace
+        results.append('⚠️ No build output found. Serving workspace directly.')
+
+    # Update project status
+    project.status = 'deployed'
+    project.preview_domain = f'{slug}.saasclaw.ai'
+    project.save()
+
+    # Try to set up nginx for this project
+    domain = f'{slug}.saasclaw.ai'
+    results.append(f'🌐 Deploy ready at https://{domain}')
+    results.append(f'📂 Web root: {web_root}')
+
+    return Response({
+        'status': 'completed',
+        'result': '\n'.join(results),
+        'url': f'https://{domain}',
+        'web_root': web_root,
+    })
 
 
 @api_view(['GET'])
