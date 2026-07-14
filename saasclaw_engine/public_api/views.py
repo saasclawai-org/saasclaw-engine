@@ -623,7 +623,7 @@ def deploy_trigger(request, slug):
     domain = f'{slug}.saasclaw.ai'
     nginx_conf = f'/etc/nginx/sites-available/{slug}'
     if not os.path.exists(nginx_conf):
-        nginx_content = f'''server {{
+        nginx_content = rf'''server {{
     listen 80;
     listen [::]:80;
     server_name {domain};
