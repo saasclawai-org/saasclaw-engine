@@ -939,7 +939,7 @@ def set_env_var(workspace_path: str, key: str, value: str, is_secret: bool = Tru
     """Set an env var — writes to DB EnvironmentVariable, repo .env, and runtime .env."""
     try:
         import django
-        _os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
         django.setup()
         from saasclaw_engine.deployments.models import EnvironmentVariable, Environment
         from saasclaw_engine.projects.models import Project
@@ -1038,7 +1038,7 @@ def supabase_sql(workspace_path: str, sql: str) -> str:
     """
     try:
         import django
-        _os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
         django.setup()
         from saasclaw_engine.deployments.models import EnvironmentVariable, Environment
         from saasclaw_engine.projects.models import Project
