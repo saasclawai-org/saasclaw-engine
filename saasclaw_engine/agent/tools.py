@@ -22,7 +22,7 @@ MAX_OUTPUT = 20000
 
 logger = logging.getLogger(__name__)
 
-from .tool_subtasks import background_command, poll_command, spawn_subtask, check_subtask
+from .tool_subtasks import background_command, poll_command, spawn_subtask, check_subtask, TOOL_DEFINITIONS
 
 # Docker sandbox configuration
 SANDBOX_IMAGE = "saasclaw-sandbox:latest"

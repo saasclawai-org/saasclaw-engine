@@ -5,7 +5,9 @@ All endpoints require JWT auth (or are open in SINGLE_USER mode).
 """
 import json
 import logging
+import os
 import re
+import subprocess
 
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -158,6 +160,13 @@ def projects_list_create(request):
     )
 
     workspace_path = f'/srv/saasclaw/projects/{slug}/repo'
+    os.makedirs(workspace_path, exist_ok=True)
+
+    # Initialize git repo so agent tools work
+    subprocess.run(['git', 'init'], cwd=workspace_path, capture_output=True, timeout=10)
+    subprocess.run(['git', 'config', 'user.email', 'agent@saasclaw.ai'], cwd=workspace_path, capture_output=True, timeout=5)
+    subprocess.run(['git', 'config', 'user.name', 'SaaSClaw Agent'], cwd=workspace_path, capture_output=True, timeout=5)
+
     Workspace.objects.create(
         project=project,
         user=user,
@@ -257,17 +266,23 @@ def sessions_list_create(request, slug):
     if not project:
         return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    from saasclaw_engine.studio_models.models import AgentSession
+    from saasclaw_engine.studio_models.models import AgentSession, AgentMessage
 
     if request.method == 'GET':
         sessions = AgentSession.objects.filter(
-            workspace__project=project,
+            project=project, user=user,
         ).order_by('-created_at')[:50]
-        return Response([{
-            'id': str(s.id),
-            'created_at': s.created_at.isoformat(),
-            'title': s.title or '',
-        } for s in sessions])
+        data = []
+        for s in sessions:
+            last_msg = s.messages.order_by('-created_at').first()
+            data.append({
+                'id': str(s.id),
+                'created_at': s.created_at.isoformat(),
+                'title': s.title or '',
+                'last_message': last_msg.content[:100] if last_msg else '',
+                'status': s.status,
+            })
+        return Response(data)
 
     # POST — create session
     workspace = _project_workspace(project)
@@ -275,7 +290,9 @@ def sessions_list_create(request, slug):
         return Response({'detail': 'No workspace found.'}, status=status.HTTP_400_BAD_REQUEST)
 
     session = AgentSession.objects.create(
+        project=project,
         workspace=workspace,
+        user=user,
         title=request.data.get('title', 'New session'),
     )
     return Response({
@@ -283,6 +300,7 @@ def sessions_list_create(request, slug):
         'created_at': session.created_at.isoformat(),
         'title': session.title,
         'messages': [],
+        'status': session.status,
     }, status=status.HTTP_201_CREATED)
 
 
@@ -294,17 +312,24 @@ def session_detail(request, slug, session_id):
     if not project:
         return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    from saasclaw_engine.studio_models.models import AgentSession
+    from saasclaw_engine.studio_models.models import AgentSession, AgentMessage
     try:
-        session = AgentSession.objects.get(id=session_id, workspace__project=project)
+        session = AgentSession.objects.get(id=session_id, project=project, user=user)
     except AgentSession.DoesNotExist:
         return Response({'detail': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+    msgs = session.messages.order_by('created_at')
     return Response({
         'id': str(session.id),
         'created_at': session.created_at.isoformat(),
         'title': session.title,
-        'messages': session.messages or [],
+        'status': session.status,
+        'messages': [{
+            'role': m.role,
+            'content': m.content,
+            'tool_call': m.tool_call or None,
+            'created_at': m.created_at.isoformat(),
+        } for m in msgs],
     })
 
 
@@ -318,9 +343,9 @@ def session_send(request, slug, session_id):
     if not project:
         return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    from saasclaw_engine.studio_models.models import AgentSession
+    from saasclaw_engine.studio_models.models import AgentSession, AgentMessage
     try:
-        session = AgentSession.objects.get(id=session_id, workspace__project=project)
+        session = AgentSession.objects.get(id=session_id, project=project, user=user)
     except AgentSession.DoesNotExist:
         return Response({'detail': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -332,9 +357,26 @@ def session_send(request, slug, session_id):
     if not workspace:
         return Response({'detail': 'No workspace found.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # Mark session as running
+    AgentSession.objects.filter(id=session.id).update(status='running')
+
+    # Build conversation from existing messages
+    existing = session.messages.order_by('created_at')
+    conversation = [
+        {'role': m.role, 'content': m.content, 'tool_call': m.tool_call or {}}
+        for m in existing
+        if m.role in ('user', 'assistant')
+    ]
+
+    # Save user message
+    AgentMessage.objects.create(
+        session=session,
+        role='user',
+        content=message,
+        tool_call={},
+    )
+
     workspace_path = workspace.local_path
-    conversation = session.messages or []
-    conversation = [m for m in conversation if m.get('role') in ('user', 'assistant')]
 
     def event_stream():
         try:
@@ -350,39 +392,67 @@ def session_send(request, slug, session_id):
                 session_id=str(session.id),
             )
 
-            # Save messages back to session
-            all_messages = list(session.messages or []) + [
-                {'role': 'user', 'content': message},
-            ] + list(new_messages)
-            session.messages = all_messages
-            session.save(update_fields=['messages', 'updated_at'])
-
             # Stream each message as SSE events
             for msg in new_messages:
                 role = msg.get('role', 'assistant')
                 content = msg.get('content', '')
-                tool_calls = msg.get('tool_calls')
+                tool_call = msg.get('tool_call', msg.get('tool_calls'))
+
+                if role == 'user':
+                    # Already saved above
+                    continue
 
                 if role == 'assistant' and content:
+                    # Save and stream assistant text
+                    AgentMessage.objects.create(
+                        session=session,
+                        role='assistant',
+                        content=content,
+                        tool_call=tool_call if isinstance(tool_call, dict) else {},
+                    )
                     yield f'data: {json.dumps({"type": "content", "content": content})}\n\n'
-                elif role == 'assistant' and tool_calls:
-                    for tc in tool_calls:
-                        if isinstance(tc, dict):
-                            tc_name = tc.get('function', {}).get('name', '')
-                        else:
-                            tc_name = str(tc)
-                        yield f'data: {json.dumps({"type": "tool_call", "name": tc_name})}\n\n'
+
+                elif role == 'assistant' and tool_call:
+                    # Tool call from assistant
+                    AgentMessage.objects.create(
+                        session=session,
+                        role='assistant',
+                        content=content or '',
+                        tool_call=tool_call if isinstance(tool_call, dict) else {},
+                    )
+                    if isinstance(tool_call, dict):
+                        tc_name = tool_call.get('function', {}).get('name', tool_call.get('name', ''))
+                    elif isinstance(tool_call, list):
+                        for tc in tool_call:
+                            tc_name = tc.get('function', {}).get('name', str(tc)) if isinstance(tc, dict) else str(tc)
+                            yield f'data: {json.dumps({"type": "tool_call", "name": tc_name})}\n\n'
+                        continue
+                    else:
+                        tc_name = str(tool_call)
+                    yield f'data: {json.dumps({"type": "tool_call", "name": tc_name})}\n\n'
+
                 elif role == 'tool':
                     tool_name = msg.get('name', 'unknown')
                     tool_content = msg.get('content', '')
-                    # Truncate large tool results
-                    if len(str(tool_content)) > 2000:
-                        tool_content = str(tool_content)[:2000] + '...'
-                    yield f'data: {json.dumps({"type": "tool_result", "name": tool_name, "content": tool_content})}\n\n'
+                    # Save tool result
+                    AgentMessage.objects.create(
+                        session=session,
+                        role='tool',
+                        content=str(tool_content)[:2000],
+                        tool_call={'name': tool_name, 'result': str(tool_content)[:200]},
+                    )
+                    # Truncate for SSE
+                    display = str(tool_content)
+                    if len(display) > 2000:
+                        display = display[:2000] + '...'
+                    yield f'data: {json.dumps({"type": "tool_result", "name": tool_name, "content": display})}\n\n'
 
+            # Mark session as idle
+            AgentSession.objects.filter(id=session.id).update(status='idle')
             yield 'data: [DONE]\n\n'
         except Exception as e:
             logger.exception('SSE stream error for project=%s session=%s', slug, session_id)
+            AgentSession.objects.filter(id=session.id).update(status='idle')
             yield f'data: {json.dumps({"type": "error", "content": str(e)})}\n\n'
 
     response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
