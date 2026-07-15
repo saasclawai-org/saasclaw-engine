@@ -756,6 +756,19 @@ def _ensure_nginx_config(slug, domain, web_root, environment='preview'):
         ssl_cert = "/etc/letsencrypt/live/saasclaw.ai/fullchain.pem"
         ssl_key = "/etc/letsencrypt/live/saasclaw.ai/privkey.pem"
     
+    # Include security headers if available
+    security_include = ""
+    security_path = "/etc/nginx/snippets/saasclaw-security.conf"
+    if os.path.exists(security_path):
+        security_include = f"    include {security_path};\n"
+
+    # Include preview branding if available
+    branding_include = ""
+    if environment == 'preview':
+        branding_path = "/etc/nginx/snippets/saasclaw-preview-branding.conf"
+        if os.path.exists(branding_path):
+            branding_include = f"    include {branding_path};\n"
+
     config = f"""server {{
     listen 80;
     listen [::]:80;
@@ -772,14 +785,49 @@ server {{
     ssl_certificate_key {ssl_key};
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-
+{security_include}{branding_include}
     client_max_body_size 25m;
 
     root {web_root};
     index index.html;
 
+    # Proxy Tax API to Django
+    location /api/v1/tax/ {{
+        proxy_pass http://127.0.0.1:8010/api/v1/tax/;
+        proxy_set_header Host saasclaw.ai;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+    }}
+
+    # SSE streaming for agent sessions
+    location ~ /api/v1/projects/[^/]+/sessions/[^/]+/send/ {{
+        proxy_pass http://127.0.0.1:8010;
+        proxy_set_header Host saasclaw.ai;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;
+    }}
+
+    # Proxy Form API to Django
+    location /api/forms/ {{
+        proxy_pass http://127.0.0.1:8010;
+        proxy_set_header Host saasclaw.ai;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+    }}
+
     location / {{
-        try_files $uri $uri/ =404;
+        try_files $uri $uri/ /index.html;
     }}
 }}
 """
