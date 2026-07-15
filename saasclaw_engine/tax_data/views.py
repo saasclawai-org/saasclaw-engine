@@ -43,7 +43,7 @@ class StateTaxProfileViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         """Public read, admin write."""
-        if self.action in ('list', 'retrieve', 'by_year'):
+        if self.action in ('list', 'retrieve', 'by_year', 'sources'):
             return [AllowAny()]
         return [IsAdminUser()]
 
@@ -60,3 +60,11 @@ class StateTaxProfileViewSet(viewsets.ModelViewSet):
         profiles = self.queryset.filter(year=int(year))
         serializer = StateTaxProfileSerializer(profiles, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='sources')
+    def sources(self, request):
+        """Public: get source references for all states with source_url set."""
+        profiles = StateTaxProfile.objects.filter(source_url__gt='').values(
+            'year', 'state_code', 'state_name', 'source_url', 'source_name', 'last_verified'
+        )
+        return Response(list(profiles))

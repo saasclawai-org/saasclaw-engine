@@ -36,6 +36,9 @@ class FederalTaxYear(models.Model):
     pub15t_deduction_married = models.PositiveIntegerField(default=12900,
         help_text='Line 1g deduction equivalent for standard schedule (MFJ)')
 
+    source_url = models.URLField(blank=True, default='', help_text='Link to IRS publication for this year')
+    source_name = models.CharField(max_length=200, blank=True, default='', help_text='Name of the official source document')
+    last_verified = models.DateField(null=True, blank=True, help_text='Date when data was last verified against source')
     note = models.TextField(blank=True, help_text='Optional notes about this tax year')
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -132,11 +135,20 @@ class StateTaxProfile(models.Model):
     default_allowances_hoh = models.PositiveIntegerField(default=0,
         help_text='Default allowances for head of household')
 
+    # Whether allowance amount already includes standard deduction (MN-style)
+    # or whether both standard deduction and allowances are subtracted (GA-style)
+    allowance_includes_standard_deduction = models.BooleanField(default=True,
+        help_text='True: allowance replaces standard deduction (MN-style, subtract only allowances×amount). '
+                  'False: both standard deduction and allowances are subtracted (GA-style).')
+
     # Local taxes
     has_local_taxes = models.BooleanField(default=False)
     local_tax_note = models.TextField(blank=True)
 
     notes = models.TextField(blank=True, help_text='Internal notes about this state\'s tax rules')
+    source_url = models.URLField(blank=True, default='', help_text='Link to official state withholding publication')
+    source_name = models.CharField(max_length=200, blank=True, default='', help_text='Name of the official source document')
+    last_verified = models.DateField(null=True, blank=True, help_text='Date when data was last verified against source')
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

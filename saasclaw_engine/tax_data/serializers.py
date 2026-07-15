@@ -23,6 +23,7 @@ class FederalTaxYearSerializer(serializers.ModelSerializer):
             'additional_medicare_threshold',
             'standard_deduction_single', 'standard_deduction_married', 'standard_deduction_hoh',
             'pub15t_deduction_single', 'pub15t_deduction_married',
+            'source_url', 'source_name', 'last_verified',
             'note', 'brackets',
         ]
 
@@ -61,7 +62,9 @@ class StateTaxProfileSerializer(serializers.ModelSerializer):
             'withholding_method',
             'withholding_allowance_single', 'withholding_allowance_married', 'withholding_allowance_hoh',
             'default_allowances_single', 'default_allowances_married', 'default_allowances_hoh',
+            'allowance_includes_standard_deduction',
             'has_local_taxes', 'local_tax_note', 'notes',
+            'source_url', 'source_name', 'last_verified',
             'brackets', 'insurance_rates',
         ]
 
@@ -101,7 +104,9 @@ class StateTaxProfileWriteSerializer(serializers.ModelSerializer):
             'withholding_method',
             'withholding_allowance_single', 'withholding_allowance_married', 'withholding_allowance_hoh',
             'default_allowances_single', 'default_allowances_married', 'default_allowances_hoh',
+            'allowance_includes_standard_deduction',
             'has_local_taxes', 'local_tax_note', 'notes',
+            'source_url', 'source_name', 'last_verified',
             'brackets', 'insurance_rates',
         ]
 
@@ -155,6 +160,7 @@ class FederalTaxYearWriteSerializer(serializers.ModelSerializer):
             'additional_medicare_threshold_mfs', 'additional_medicare_threshold_hoh',
             'standard_deduction_single', 'standard_deduction_married', 'standard_deduction_hoh',
             'pub15t_deduction_single', 'pub15t_deduction_married',
+            'source_url', 'source_name', 'last_verified',
             'note', 'brackets',
         ]
 
