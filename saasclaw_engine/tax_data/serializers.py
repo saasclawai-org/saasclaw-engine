@@ -57,7 +57,11 @@ class StateTaxProfileSerializer(serializers.ModelSerializer):
             'id', 'year', 'state_code', 'state_name', 'tax_type', 'flat_rate',
             'standard_deduction_single', 'standard_deduction_married', 'standard_deduction_hoh',
             'personal_exemption_single', 'personal_exemption_married', 'personal_exemption_hoh',
-            'dependent_exemption', 'has_local_taxes', 'local_tax_note', 'notes',
+            'dependent_exemption',
+            'withholding_method',
+            'withholding_allowance_single', 'withholding_allowance_married', 'withholding_allowance_hoh',
+            'default_allowances_single', 'default_allowances_married', 'default_allowances_hoh',
+            'has_local_taxes', 'local_tax_note', 'notes',
             'brackets', 'insurance_rates',
         ]
 
@@ -93,7 +97,11 @@ class StateTaxProfileWriteSerializer(serializers.ModelSerializer):
             'year', 'state_code', 'state_name', 'tax_type', 'flat_rate',
             'standard_deduction_single', 'standard_deduction_married', 'standard_deduction_hoh',
             'personal_exemption_single', 'personal_exemption_married', 'personal_exemption_hoh',
-            'dependent_exemption', 'has_local_taxes', 'local_tax_note', 'notes',
+            'dependent_exemption',
+            'withholding_method',
+            'withholding_allowance_single', 'withholding_allowance_married', 'withholding_allowance_hoh',
+            'default_allowances_single', 'default_allowances_married', 'default_allowances_hoh',
+            'has_local_taxes', 'local_tax_note', 'notes',
             'brackets', 'insurance_rates',
         ]
 

@@ -107,6 +107,31 @@ class StateTaxProfile(models.Model):
     dependent_exemption = models.PositiveIntegerField(default=0,
         help_text='Per-dependent exemption amount (e.g. $4,930 for SC)')
 
+    # Withholding method
+    WITHHOLDING_METHOD_CHOICES = [
+        ('standard_deduction', 'Standard Deduction'),
+        ('allowance', 'Allowance-Based'),
+    ]
+    withholding_method = models.CharField(max_length=20, choices=WITHHOLDING_METHOD_CHOICES, default='standard_deduction',
+        help_text='How withholding is calculated: standard_deduction subtracts std ded + personal exemption from wages; '
+                  'allowance subtracts (default_allowances × allowance_amount) from wages.')
+
+    # Withholding allowance amount per allowance (for allowance-based states like MN)
+    withholding_allowance_single = models.PositiveIntegerField(default=0,
+        help_text='Per-allowance deduction amount for single filers (e.g. $4,950 for MN 2025)')
+    withholding_allowance_married = models.PositiveIntegerField(default=0,
+        help_text='Per-allowance deduction amount for married filers')
+    withholding_allowance_hoh = models.PositiveIntegerField(default=0,
+        help_text='Per-allowance deduction amount for head of household filers')
+
+    # Default number of allowances for withholding (what a typical single/MFJ/HOH filer claims)
+    default_allowances_single = models.PositiveIntegerField(default=0,
+        help_text='Default allowances for single/MFS filers (e.g. 1 for MN)')
+    default_allowances_married = models.PositiveIntegerField(default=0,
+        help_text='Default allowances for married filing jointly')
+    default_allowances_hoh = models.PositiveIntegerField(default=0,
+        help_text='Default allowances for head of household')
+
     # Local taxes
     has_local_taxes = models.BooleanField(default=False)
     local_tax_note = models.TextField(blank=True)
