@@ -1,0 +1,16 @@
+"""Tax data URL configuration."""
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+
+from .views import FederalTaxYearViewSet, StateTaxProfileViewSet
+
+router = DefaultRouter()
+router.register(r'federal', FederalTaxYearViewSet, basename='federal-tax-year')
+router.register(r'states', StateTaxProfileViewSet, basename='state-tax-profile')
+
+urlpatterns = [
+    path('auth/token/', TokenObtainPairView.as_view(), name='tax-admin-token'),
+    path('auth/token/refresh/', TokenRefreshView.as_view(), name='tax-admin-token-refresh'),
+    path('', include(router.urls)),
+]
