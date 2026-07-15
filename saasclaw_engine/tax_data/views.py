@@ -65,6 +65,7 @@ class StateTaxProfileViewSet(viewsets.ModelViewSet):
     def sources(self, request):
         """Public: get source references for all states with source_url set."""
         profiles = StateTaxProfile.objects.filter(source_url__gt='').values(
-            'year', 'state_code', 'state_name', 'source_url', 'source_name', 'last_verified'
+            'year', 'state_code', 'state_name', 'source_url', 'source_name', 'last_verified',
+            'agency_name', 'agency_phone', 'agency_email'
         )
         return Response(list(profiles))

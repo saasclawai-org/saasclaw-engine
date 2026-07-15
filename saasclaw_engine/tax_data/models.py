@@ -150,6 +150,11 @@ class StateTaxProfile(models.Model):
     source_name = models.CharField(max_length=200, blank=True, default='', help_text='Name of the official source document')
     last_verified = models.DateField(null=True, blank=True, help_text='Date when data was last verified against source')
 
+    # Agency contact info (from IRS Publication 15-A Directory)
+    agency_name = models.CharField(max_length=200, blank=True, default='', help_text='State withholding agency name')
+    agency_phone = models.CharField(max_length=100, blank=True, default='', help_text='Agency phone number(s)')
+    agency_email = models.CharField(max_length=200, blank=True, default='', help_text='Agency email or contact URL')
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

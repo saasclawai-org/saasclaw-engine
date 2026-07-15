@@ -65,6 +65,7 @@ class StateTaxProfileSerializer(serializers.ModelSerializer):
             'allowance_includes_standard_deduction',
             'has_local_taxes', 'local_tax_note', 'notes',
             'source_url', 'source_name', 'last_verified',
+            'agency_name', 'agency_phone', 'agency_email',
             'brackets', 'insurance_rates',
         ]
 
@@ -107,6 +108,7 @@ class StateTaxProfileWriteSerializer(serializers.ModelSerializer):
             'allowance_includes_standard_deduction',
             'has_local_taxes', 'local_tax_note', 'notes',
             'source_url', 'source_name', 'last_verified',
+            'agency_name', 'agency_phone', 'agency_email',
             'brackets', 'insurance_rates',
         ]
 
