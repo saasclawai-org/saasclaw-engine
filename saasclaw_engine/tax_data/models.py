@@ -209,3 +209,47 @@ class StateInsuranceRate(models.Model):
 
     def __str__(self):
         return f'{self.name}: {self.rate}{" (cap: $" + str(self.wage_base) if self.wage_base else " (no cap)"}'
+
+class LocalTaxInfo(models.Model):
+    """Metadata about a local tax (locality name, type, etc.) within a state."""
+    profile = models.ForeignKey(StateTaxProfile, on_delete=models.CASCADE, related_name='local_taxes')
+    locality = models.CharField(max_length=50, help_text='Display name (e.g. "New York City")')
+    locality_code = models.CharField(max_length=20, help_text='Short code (e.g. "nyc", "yonkers")')
+    tax_type = models.CharField(max_length=12, choices=[
+        ('progressive', 'Progressive Brackets'),
+        ('flat', 'Flat Rate'),
+        ('surcharge', 'Surcharge on State Tax'),
+    ], default='progressive')
+    flat_rate = models.DecimalField(max_digits=6, decimal_places=6, null=True, blank=True,
+        help_text='Flat rate or surcharge rate (e.g. 0.175 = 17.5% surcharge for Yonkers)')
+    description = models.TextField(blank=True, help_text='Brief description shown to users (e.g. "NYC residents pay additional income tax")')
+
+    class Meta:
+        unique_together = ('profile', 'locality_code')
+        ordering = ['profile', 'locality_code']
+        verbose_name = 'Local Tax Info'
+        verbose_name_plural = 'Local Tax Info'
+
+    def __str__(self):
+        return f'{self.profile.state_code} {self.locality} ({self.get_tax_type_display()})'
+
+
+class LocalTaxBracket(models.Model):
+    """Local/municipal tax brackets (e.g. NYC, Yonkers) within a local tax."""
+    local_tax = models.ForeignKey(LocalTaxInfo, on_delete=models.CASCADE, related_name='brackets')
+    filing_status = models.CharField(max_length=20, choices=[
+        ('single', 'Single/MFS'),
+        ('married', 'MFJ'),
+        ('head_of_household', 'HOH'),
+    ])
+    min_amount = models.PositiveIntegerField(help_text='Lower bound of bracket (annual)')
+    max_amount = models.PositiveIntegerField(null=True, blank=True, help_text='Upper bound (null = no limit)')
+    rate = models.DecimalField(max_digits=6, decimal_places=6, help_text='Tax rate (e.g. 0.03876 = 3.876%)')
+
+    class Meta:
+        ordering = ['local_tax', 'filing_status', 'min_amount']
+        verbose_name = 'Local Tax Bracket'
+        verbose_name_plural = 'Local Tax Brackets'
+
+    def __str__(self):
+        return f'{self.local_tax.profile.state_code} {self.local_tax.locality} {self.filing_status}: ${self.min_amount:,}\u2013{self.max_amount or "\u221e"} @ {self.rate}'

@@ -9,6 +9,7 @@ from .models import FederalTaxYear, StateTaxProfile
 from .serializers import (
     FederalTaxYearSerializer, FederalTaxYearWriteSerializer,
     StateTaxProfileSerializer, StateTaxProfileListSerializer, StateTaxProfileWriteSerializer,
+    LocalTaxInfoSerializer,
 )
 
 
@@ -38,12 +39,12 @@ class FederalTaxYearViewSet(viewsets.ModelViewSet):
 
 class StateTaxProfileViewSet(viewsets.ModelViewSet):
     """Admin CRUD + public read for state tax profiles."""
-    queryset = StateTaxProfile.objects.prefetch_related('brackets', 'insurance_rates').all()
+    queryset = StateTaxProfile.objects.prefetch_related('brackets', 'insurance_rates', 'local_taxes__brackets').all()
     lookup_field = 'pk'
 
     def get_permissions(self):
         """Public read, admin write."""
-        if self.action in ('list', 'retrieve', 'by_year', 'sources'):
+        if self.action in ('list', 'retrieve', 'by_year', 'sources', 'local_taxes'):
             return [AllowAny()]
         return [IsAdminUser()]
 
@@ -69,3 +70,11 @@ class StateTaxProfileViewSet(viewsets.ModelViewSet):
             'agency_name', 'agency_phone', 'agency_email'
         )
         return Response(list(profiles))
+
+    @action(detail=True, methods=['get'], url_path='local-taxes')
+    def local_taxes(self, request, pk=None):
+        """Public: get local tax info and brackets for a state profile."""
+        profile = self.get_object()
+        local_taxes = profile.local_taxes.all()
+        serializer = LocalTaxInfoSerializer(local_taxes, many=True)
+        return Response(serializer.data)

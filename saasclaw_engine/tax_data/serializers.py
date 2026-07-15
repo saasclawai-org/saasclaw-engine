@@ -1,7 +1,7 @@
 """Tax data API — public endpoints for calculator, admin endpoints for editing."""
 
 from rest_framework import serializers
-from .models import FederalTaxYear, FederalBracket, StateTaxProfile, StateBracket, StateInsuranceRate
+from .models import FederalTaxYear, FederalBracket, StateTaxProfile, StateBracket, StateInsuranceRate, LocalTaxBracket, LocalTaxInfo
 
 
 class FederalBracketSerializer(serializers.ModelSerializer):
@@ -48,9 +48,24 @@ class StateInsuranceRateSerializer(serializers.ModelSerializer):
         fields = ['category', 'name', 'rate', 'wage_base']
 
 
+class LocalTaxBracketSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LocalTaxBracket
+        fields = ['filing_status', 'min_amount', 'max_amount', 'rate']
+
+
+class LocalTaxInfoSerializer(serializers.ModelSerializer):
+    brackets = LocalTaxBracketSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = LocalTaxInfo
+        fields = ['locality', 'locality_code', 'tax_type', 'flat_rate', 'description', 'brackets']
+
+
 class StateTaxProfileSerializer(serializers.ModelSerializer):
     brackets = StateBracketSerializer(many=True, read_only=True)
     insurance_rates = StateInsuranceRateSerializer(many=True, read_only=True)
+    local_taxes = LocalTaxInfoSerializer(many=True, read_only=True)
 
     class Meta:
         model = StateTaxProfile
@@ -66,7 +81,7 @@ class StateTaxProfileSerializer(serializers.ModelSerializer):
             'has_local_taxes', 'local_tax_note', 'notes',
             'source_url', 'source_name', 'last_verified',
             'agency_name', 'agency_phone', 'agency_email',
-            'brackets', 'insurance_rates',
+            'brackets', 'insurance_rates', 'local_taxes',
         ]
 
 
@@ -76,6 +91,38 @@ class StateTaxProfileListSerializer(serializers.ModelSerializer):
         model = StateTaxProfile
         fields = ['id', 'year', 'state_code', 'state_name', 'tax_type', 'flat_rate']
 
+
+
+class LocalTaxBracketWriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LocalTaxBracket
+        fields = ['filing_status', 'min_amount', 'max_amount', 'rate']
+
+
+class LocalTaxInfoWriteSerializer(serializers.ModelSerializer):
+    brackets = LocalTaxBracketWriteSerializer(many=True, required=False)
+
+    class Meta:
+        model = LocalTaxInfo
+        fields = ['locality', 'locality_code', 'tax_type', 'flat_rate', 'description', 'brackets']
+
+    def create(self, validated_data):
+        brackets_data = validated_data.pop('brackets', [])
+        local_tax = LocalTaxInfo.objects.create(**validated_data)
+        for bracket in brackets_data:
+            LocalTaxBracket.objects.create(local_tax=local_tax, **bracket)
+        return local_tax
+
+    def update(self, instance, validated_data):
+        brackets_data = validated_data.pop('brackets', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        if brackets_data is not None:
+            instance.brackets.all().delete()
+            for bracket in brackets_data:
+                LocalTaxBracket.objects.create(local_tax=instance, **bracket)
+        return instance
 
 # ─── Write serializers (admin) ─────────────────────────────────────────
 
@@ -109,7 +156,7 @@ class StateTaxProfileWriteSerializer(serializers.ModelSerializer):
             'has_local_taxes', 'local_tax_note', 'notes',
             'source_url', 'source_name', 'last_verified',
             'agency_name', 'agency_phone', 'agency_email',
-            'brackets', 'insurance_rates',
+            'brackets', 'insurance_rates', 'local_taxes',
         ]
 
     def create(self, validated_data):
