@@ -1,4 +1,6 @@
 """PA Tax Code API views — public read + admin CRUD + bulk upsert + lookup."""
+from decimal import Decimal
+
 from django.db import models
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
@@ -13,6 +15,19 @@ from .serializers_pa import (
     PaTaxCodeSerializer, PaTaxCodeListSerializer,
     PaTaxCodeLookupSerializer,
 )
+
+
+def _normalize_rate(val):
+    """Convert percentage values > 1 to decimals. 1.00% → 0.0100."""
+    if val is None or val == '' or str(val).strip() == '':
+        return Decimal('0')
+    try:
+        num = Decimal(str(val).replace('%', '').strip())
+    except Exception:
+        return Decimal('0')
+    if num > 1:
+        num = num / Decimal('100')
+    return num
 
 
 class LenientJWTAuthentication(JWTAuthentication):
@@ -130,11 +145,11 @@ class PaTaxCodeViewSet(viewsets.ModelViewSet):
                 'municipality': rec.get('municipality', ''),
                 'school_district_id': rec.get('school_district_id', ''),
                 'school_district': rec.get('school_district', ''),
-                'municipal_nonresident_eit_rate': rec.get('municipal_nonresident_eit_rate', 0),
-                'municipal_resident_eit_rate': rec.get('municipal_resident_eit_rate', 0),
-                'school_district_eit_rate': rec.get('school_district_eit_rate', 0),
-                'school_district_pit_rate': rec.get('school_district_pit_rate', 0),
-                'total_resident_eit_rate': rec.get('total_resident_eit_rate', 0),
+                'municipal_nonresident_eit_rate': _normalize_rate(rec.get('municipal_nonresident_eit_rate', 0)),
+                'municipal_resident_eit_rate': _normalize_rate(rec.get('municipal_resident_eit_rate', 0)),
+                'school_district_eit_rate': _normalize_rate(rec.get('school_district_eit_rate', 0)),
+                'school_district_pit_rate': _normalize_rate(rec.get('school_district_pit_rate', 0)),
+                'total_resident_eit_rate': _normalize_rate(rec.get('total_resident_eit_rate', 0)),
                 'municipal_eit_lie': rec.get('municipal_eit_lie', 0),
                 'school_district_eit_lie': rec.get('school_district_eit_lie', 0),
                 'municipal_lst': rec.get('municipal_lst', 0),
@@ -194,11 +209,11 @@ class PaTaxCodeViewSet(viewsets.ModelViewSet):
                 municipality=rec.get('municipality', ''),
                 school_district_id=rec.get('school_district_id', ''),
                 school_district=rec.get('school_district', ''),
-                municipal_nonresident_eit_rate=rec.get('municipal_nonresident_eit_rate', 0),
-                municipal_resident_eit_rate=rec.get('municipal_resident_eit_rate', 0),
-                school_district_eit_rate=rec.get('school_district_eit_rate', 0),
-                school_district_pit_rate=rec.get('school_district_pit_rate', 0),
-                total_resident_eit_rate=rec.get('total_resident_eit_rate', 0),
+                municipal_nonresident_eit_rate=_normalize_rate(rec.get('municipal_nonresident_eit_rate', 0)),
+                municipal_resident_eit_rate=_normalize_rate(rec.get('municipal_resident_eit_rate', 0)),
+                school_district_eit_rate=_normalize_rate(rec.get('school_district_eit_rate', 0)),
+                school_district_pit_rate=_normalize_rate(rec.get('school_district_pit_rate', 0)),
+                total_resident_eit_rate=_normalize_rate(rec.get('total_resident_eit_rate', 0)),
                 municipal_eit_lie=rec.get('municipal_eit_lie', 0),
                 school_district_eit_lie=rec.get('school_district_eit_lie', 0),
                 municipal_lst=rec.get('municipal_lst', 0),
