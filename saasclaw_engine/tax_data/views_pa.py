@@ -2,6 +2,7 @@
 from django.db import models
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAdminUser
@@ -12,6 +13,20 @@ from .serializers_pa import (
     PaTaxCodeSerializer, PaTaxCodeListSerializer,
     PaTaxCodeLookupSerializer,
 )
+
+
+class LenientJWTAuthentication(JWTAuthentication):
+    """JWT auth that silently ignores invalid/expired tokens.
+
+    On public (AllowAny) endpoints, a stale client token should not
+    cause a 401 — the request proceeds as anonymous instead.
+    On admin (IsAdminUser) endpoints, the normal strict JWT check applies.
+    """
+    def authenticate(self, request):
+        try:
+            return super().authenticate(request)
+        except Exception:
+            return None  # Invalid token → treat as anonymous
 
 
 class PaTaxCodePagination(PageNumberPagination):
@@ -29,11 +44,14 @@ class PaTaxCodeViewSet(viewsets.ModelViewSet):
     queryset = PaTaxCode.objects.all().order_by('year', 'psd_code')
     lookup_field = 'pk'
     pagination_class = PaTaxCodePagination
+    authentication_classes = [LenientJWTAuthentication]
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve', 'years', 'lookup'):
             return [AllowAny()]
         return [IsAdminUser()]
+
+
 
     def get_serializer_class(self):
         if self.action == 'list':
