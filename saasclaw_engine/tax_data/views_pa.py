@@ -1,5 +1,9 @@
 """PA Tax Code API views — public read + admin CRUD + bulk upsert + lookup."""
+import logging
+
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 from django.db import models
 from django.shortcuts import get_object_or_404
@@ -18,16 +22,16 @@ from .serializers_pa import (
 
 
 def _normalize_rate(val):
-    """Convert percentage values > 1 to decimals. 1.00% → 0.0100."""
+    """Convert percentage values to decimals. DCED stores 1.00 = 1%, 0.5 = 0.5%.
+    Model stores as decimal: 1% = 0.01, 0.5% = 0.005.
+    Always divide by 100 because all rate values are percentages."""
     if val is None or val == '' or str(val).strip() == '':
         return Decimal('0')
     try:
         num = Decimal(str(val).replace('%', '').strip())
     except Exception:
         return Decimal('0')
-    if num > 1:
-        num = num / Decimal('100')
-    return num
+    return num / Decimal('100')
 
 
 class LenientJWTAuthentication(JWTAuthentication):
@@ -134,10 +138,19 @@ class PaTaxCodeViewSet(viewsets.ModelViewSet):
 
         created = 0
         updated = 0
-        for rec in records:
+        sample_rates = []
+        for i, rec in enumerate(records):
             psd_code = rec.get('psd_code')
             if not psd_code:
                 continue
+
+            # Log first 3 records for debugging
+            if i < 3:
+                sample_rates.append({
+                    'psd': str(psd_code),
+                    'resident': rec.get('municipal_resident_eit_rate', 'MISSING'),
+                    'total': rec.get('total_resident_eit_rate', 'MISSING'),
+                })
             defaults = {
                 'tax_collection_district': rec.get('tax_collection_district', ''),
                 'county': rec.get('county', ''),
@@ -178,7 +191,8 @@ class PaTaxCodeViewSet(viewsets.ModelViewSet):
             else:
                 updated += 1
 
-        return Response({'total': created + updated, 'created': created, 'updated': updated})
+        logger.info(f'PA bulk upsert: year={year}, total={len(records)}, created={created}, updated={updated}, sample_rates={sample_rates}')
+        return Response({'total': created + updated, 'created': created, 'updated': updated, 'sample_rates': sample_rates})
 
     @action(detail=False, methods=['post'], url_path='bulk-upsert-and-replace')
     def bulk_upsert_and_replace(self, request):
