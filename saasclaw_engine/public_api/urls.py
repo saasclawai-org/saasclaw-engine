@@ -7,6 +7,7 @@ from . import views
 urlpatterns = [
     # Auth
     path('auth/login/', csrf_exempt(views.login_view), name='public-api-login'),
+    path('auth/token/', csrf_exempt(views.login_view), name='public-api-token'),  # alias for SimpleJWT-style clients
     path('auth/register/', csrf_exempt(views.register_view), name='public-api-register'),
 
     # Projects

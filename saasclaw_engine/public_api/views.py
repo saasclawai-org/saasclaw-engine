@@ -173,7 +173,7 @@ def login_view(request):
             'refresh': str(refresh),
             'email': user.email,
         })
-    email = request.data.get('email', '')
+    email = request.data.get('email', '') or request.data.get('username', '')
     password = request.data.get('password', '')
     try:
         user = User.objects.get(email=email)

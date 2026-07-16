@@ -3,6 +3,9 @@
 Designed to be editable via admin API and served to the paycheck calculator frontend.
 """
 from django.db import models
+
+# Re-export PA model so Django discovers it
+from .models_pa import PaTaxCode  # noqa: F401
 from django.core.validators import MinValueValidator, MaxValueValidator
 
 
