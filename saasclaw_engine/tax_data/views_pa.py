@@ -1,5 +1,6 @@
 """PA Tax Code API views — public read + admin CRUD + bulk upsert + lookup."""
 import logging
+from datetime import datetime
 
 from decimal import Decimal
 
@@ -32,6 +33,27 @@ def _normalize_rate(val):
     except Exception:
         return Decimal('0')
     return num / Decimal('100')
+
+
+def _parse_date(val):
+    """Parse date strings from DCED data into YYYY-MM-DD format for Django DateField.
+    DCED dates come as M/D/YYYY (e.g. '1/12/2026' or '02/13/1969').
+    Also handles YYYY-MM-DD and empty values."""
+    if not val or str(val).strip() == '':
+        return None
+    val = str(val).strip()
+    # Already in ISO format
+    if '-' in val and len(val) == 10:
+        return val
+    # DCED M/D/YYYY format
+    for fmt in ('%m/%d/%Y', '%m/%d/%y', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(val, fmt).date().isoformat()
+        except (ValueError, TypeError):
+            continue
+    # Give up — return None rather than crash
+    logger.warning(f'Could not parse date: {val!r}')
+    return None
 
 
 class LenientJWTAuthentication(JWTAuthentication):
@@ -170,8 +192,8 @@ class PaTaxCodeViewSet(viewsets.ModelViewSet):
                 'total_lst': rec.get('total_lst', 0),
                 'municipal_lst_lie': rec.get('municipal_lst_lie', 0),
                 'school_district_lst_lie': rec.get('school_district_lst_lie', 0),
-                'municipal_lst_effective_date': rec.get('municipal_lst_effective_date') or None,
-                'school_district_lst_effective_date': rec.get('school_district_lst_effective_date') or None,
+                'municipal_lst_effective_date': _parse_date(rec.get('municipal_lst_effective_date')),
+                'school_district_lst_effective_date': _parse_date(rec.get('school_district_lst_effective_date')),
                 'eit_collector': rec.get('eit_collector', ''),
                 'eit_collector_address1': rec.get('eit_collector_address1', ''),
                 'eit_collector_city': rec.get('eit_collector_city', ''),
@@ -180,7 +202,7 @@ class PaTaxCodeViewSet(viewsets.ModelViewSet):
                 'eit_collector_phone': rec.get('eit_collector_phone', ''),
                 'eit_collector_email': rec.get('eit_collector_email', ''),
                 'eit_collector_website': rec.get('eit_collector_website', ''),
-                'date_last_updated': rec.get('date_last_updated') or None,
+                'date_last_updated': _parse_date(rec.get('date_last_updated')),
             }
             _, created_flag = PaTaxCode.objects.update_or_create(
                 year=year, psd_code=psd_code,
@@ -235,8 +257,8 @@ class PaTaxCodeViewSet(viewsets.ModelViewSet):
                 total_lst=rec.get('total_lst', 0),
                 municipal_lst_lie=rec.get('municipal_lst_lie', 0),
                 school_district_lst_lie=rec.get('school_district_lst_lie', 0),
-                municipal_lst_effective_date=rec.get('municipal_lst_effective_date') or None,
-                school_district_lst_effective_date=rec.get('school_district_lst_effective_date') or None,
+                municipal_lst_effective_date=_parse_date(rec.get('municipal_lst_effective_date')),
+                school_district_lst_effective_date=_parse_date(rec.get('school_district_lst_effective_date')),
                 eit_collector=rec.get('eit_collector', ''),
                 eit_collector_address1=rec.get('eit_collector_address1', ''),
                 eit_collector_city=rec.get('eit_collector_city', ''),
@@ -245,7 +267,7 @@ class PaTaxCodeViewSet(viewsets.ModelViewSet):
                 eit_collector_phone=rec.get('eit_collector_phone', ''),
                 eit_collector_email=rec.get('eit_collector_email', ''),
                 eit_collector_website=rec.get('eit_collector_website', ''),
-                date_last_updated=rec.get('date_last_updated') or None,
+                date_last_updated=_parse_date(rec.get('date_last_updated')),
             )
             created += 1
 
