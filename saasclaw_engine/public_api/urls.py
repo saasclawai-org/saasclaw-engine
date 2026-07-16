@@ -3,6 +3,7 @@ from django.urls import path
 from django.views.decorators.csrf import csrf_exempt
 
 from . import views
+from .api_key_views import api_keys_list_create, api_key_revoke, api_key_delete
 
 urlpatterns = [
     # Auth
@@ -40,4 +41,9 @@ urlpatterns = [
     # Infrastructure
     path('projects/<str:slug>/status/', csrf_exempt(views.project_status), name='public-api-project-status'),
     path('projects/<str:slug>/logs/<str:source>/', csrf_exempt(views.logs_view), name='public-api-logs'),
+
+    # API Keys
+    path('admin/keys/', csrf_exempt(api_keys_list_create), name='public-api-keys-list-create'),
+    path('admin/keys/<str:key_id>/revoke/', csrf_exempt(api_key_revoke), name='public-api-key-revoke'),
+    path('admin/keys/<str:key_id>/', csrf_exempt(api_key_delete), name='public-api-key-delete'),
 ]
