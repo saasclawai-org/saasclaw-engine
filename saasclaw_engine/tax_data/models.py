@@ -255,4 +255,6 @@ class LocalTaxBracket(models.Model):
         verbose_name_plural = 'Local Tax Brackets'
 
     def __str__(self):
-        return f'{self.local_tax.profile.state_code} {self.local_tax.locality} {self.filing_status}: ${self.min_amount:,}\u2013{self.max_amount or "\u221e"} @ {self.rate}'
+        en_dash = '\u2013'
+        infinity = '\u221e'
+        return f'{self.local_tax.profile.state_code} {self.local_tax.locality} {self.filing_status}: ${self.min_amount:,}{en_dash}{self.max_amount or infinity} @ {self.rate}'
