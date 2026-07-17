@@ -38,6 +38,7 @@ from .deploy_django import (
 from .deploy_static import _detect_output_dir, _deploy_static_environment
 from .deploy_node import _detect_node_version, _node_binary_path, _deploy_node_ssr_environment
 from .deploy_dotnet import _ensure_dotnet_sdk, _detect_dotnet_entrypoint, _deploy_dotnet_environment
+from .deploy_java import _deploy_java_environment
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,8 @@ def _deploy_environment(project: Project, environment_name: str, triggered_by=No
             _deploy_node_ssr_environment(project, environment, deployment, repo_path, log_file)
         elif environment.runtime_kind == Environment.RuntimeKind.DOTNET:
             _deploy_dotnet_environment(project, environment, deployment, repo_path, log_file)
+        elif environment.runtime_kind == Environment.RuntimeKind.JAVA:
+            _deploy_java_environment(project, environment, deployment, repo_path, log_file)
         else:
             _deploy_static_environment(project, environment, deployment, repo_path, log_file)
 

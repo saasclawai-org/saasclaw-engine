@@ -42,6 +42,7 @@ class Environment(models.Model):
         NODE_SSR = 'node_ssr', 'Node SSR'
         DJANGO = 'django', 'Django'
         DOTNET = 'dotnet', '.NET'
+        JAVA = 'java', 'Java / Spring Boot'
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='environments')
     name = models.CharField(max_length=20, choices=Name.choices)
