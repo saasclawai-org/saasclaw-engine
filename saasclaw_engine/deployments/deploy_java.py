@@ -243,17 +243,28 @@ def _deploy_java_environment(
         handle.write(f'Java app port: {environment.app_port}\n')
         handle.write(f'Java service name: {service_name}\n')
 
-    # Build with Maven
-    build_dir = repo_path / main_module if main_module else repo_path
-
     # Set JAVA_HOME for Maven
     maven_env = os.environ.copy()
     maven_env['JAVA_HOME'] = _JAVA_HOME
 
-    _run_command(
-        f'{mvn_bin} clean package -DskipTests -q',
-        build_dir, log_file, env=maven_env,
-    )
+    # For multi-module projects, build from root with install so inter-module
+    # dependencies resolve, then find the runnable JAR in the app module.
+    # For single-module, just package.
+    if main_module:
+        with log_file.open('a', encoding='utf-8') as handle:
+            handle.write(f'Building multi-module project from root: {repo_path}\n')
+        _run_command(
+            f'{mvn_bin} clean install -Dmaven.test.skip=true -q',
+            repo_path, log_file, env=maven_env,
+        )
+        build_dir = repo_path / main_module
+    else:
+        # Single-module project
+        build_dir = repo_path
+        _run_command(
+            f'{mvn_bin} clean package -Dmaven.test.skip=true -q',
+            build_dir, log_file, env=maven_env,
+        )
 
     # Find the built JAR
     target_dir = build_dir / 'target'
