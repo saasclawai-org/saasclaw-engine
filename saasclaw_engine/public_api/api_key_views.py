@@ -2,7 +2,7 @@
 from django.shortcuts import get_object_or_404
 
 from rest_framework.decorators import api_view, permission_classes, authentication_classes, parser_classes
-from rest_framework.permissions import IsAdminUser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import JSONParser
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.response import Response
@@ -12,7 +12,7 @@ from .models import ApiKey
 
 @api_view(['GET', 'POST'])
 @authentication_classes([JWTAuthentication])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAuthenticated])
 @parser_classes([JSONParser])
 def api_keys_list_create(request):
     """GET: list keys. POST: create a new key."""
@@ -61,7 +61,7 @@ def api_keys_list_create(request):
 
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAuthenticated])
 @parser_classes([JSONParser])
 def api_key_revoke(request, key_id):
     """Revoke (deactivate) an API key."""
@@ -73,7 +73,7 @@ def api_key_revoke(request, key_id):
 
 @api_view(['DELETE'])
 @authentication_classes([JWTAuthentication])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAuthenticated])
 @parser_classes([JSONParser])
 def api_key_delete(request, key_id):
     """Permanently delete an API key."""
