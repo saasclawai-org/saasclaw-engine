@@ -13,6 +13,10 @@ SaaSClaw Engine is the backend that powers [SaaSClaw](https://saasclaw.ai). It p
 - **GitHub Integration** — Clone, commit, and push to user repos via a GitHub App (JWT auth + installation tokens)
 - **Task Queue** — Async Celery workers for long-running deploy jobs
 - **API Key Management** — Encrypted storage for user-provided LLM provider keys
+- **SaaSClaw API Keys** — Long-lived `sk_` keys for REST API auth (`CombinedAuthentication` class: API key → JWT → session fallback chain)
+- **Public REST API** — Full CRUD at `/api/v1/` for projects, files, sessions, deploys, git, env vars, and infrastructure
+- **Figma Integration** — OAuth-based connection, design token extraction (colors, typography, spacing, shadows), and wizard tool integration
+- **Spring Boot / Java Deploy** — Full Java runtime support: Maven build, JAR packaging, systemd service management
 - **Risk Tier Classification** — Automatic Low/Medium/High/Critical risk assignment based on data sensitivity
 - **Secret Scanning** — Deploy pipeline detects AWS keys, GitHub tokens, private keys, and other secrets in committed code
 - **Dependency Scanning** — Automated vulnerability scanning (`npm audit`, `pip check`) during deploy
@@ -620,4 +624,6 @@ AGPL-3.0. See [LICENSE](LICENSE).
 ## Links
 
 - [SaaSClaw](https://saasclaw.ai) — The production platform built on this engine
+- [API Docs](https://saasclaw.ai/docs/api/) — REST API reference
+- [Java SDK](https://github.com/saasclawai-org/saasclaw-java-sdk) — Spring Boot Starter for the SaaSClaw API
 - [Issues](https://github.com/saasclawai-org/saasclaw-engine/issues) — Bug reports and feature requests
