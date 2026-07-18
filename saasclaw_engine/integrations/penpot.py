@@ -277,7 +277,7 @@ def _walk_penpot_node(node, tokens: dict, seen_colors: set,
             })
 
     # Corner radii
-    for rkey in ('r1', 'r2', 'r3', 'r4'):
+    for rkey in ('r1', 'r2', 'r3', 'r4', 'r'):
         r = node.get(rkey)
         if r and r not in seen_radii:
             tokens["radii"].append(r)
