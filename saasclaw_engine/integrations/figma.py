@@ -30,7 +30,7 @@ def get_oauth_url(state: str) -> str:
     params = {
         "client_id": settings.FIGMA_CLIENT_ID,
         "redirect_uri": settings.FIGMA_REDIRECT_URI,
-        "scope": "file_content:read file_metadata:read",
+        "scope": "file_content:read file_metadata:read current_user:read file_versions:read",
         "state": state,
         "response_type": "code",
     }
