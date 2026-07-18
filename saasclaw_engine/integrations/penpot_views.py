@@ -8,11 +8,13 @@ import logging
 import secrets
 import string
 import subprocess
+import requests
 
 from django.contrib.auth import get_user_model
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseRedirect, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from django.conf import settings
 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -181,6 +183,80 @@ def penpot_files(request, project_id):
     except Exception as e:
         logger.error("Penpot get_project_files failed: %s", e)
         return JsonResponse({'error': str(e)}, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def penpot_sso(request):
+    """SSO redirect: logs user into Penpot and redirects with auth cookie.
+
+    Uses DRF IsAuthenticated (session auth works since SessionAuthentication is enabled).
+    """
+    conn = PenpotConnection.objects.filter(user=request.user).first()
+    if not conn or not conn.is_connected:
+        # Try to provision on the fly
+        try:
+            conn = _provision_penpot_account(request.user)
+        except Exception as e:
+            return JsonResponse({'error': f'Penpot provisioning failed: {e}'}, status=500)
+
+    # Login to Penpot to get a fresh auth cookie
+    try:
+        resp = requests.post(
+            f'{_get_penpot_base_url()}/api/rpc/command/login-with-password',
+            json={'email': conn.penpot_email, 'password': conn.penpot_password},
+            headers={'Accept': 'application/json', 'Content-Type': 'application/json'},
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        logger.error("Penpot SSO login failed: %s", e)
+        return JsonResponse({'error': 'Penpot login failed'}, status=502)
+
+    # Extract auth cookie from response
+    auth_cookie = None
+    for cookie in resp.cookies:
+        if cookie.name == 'auth-token':
+            auth_cookie = cookie
+            break
+
+    if not auth_cookie:
+        # Try from Set-Cookie header directly
+        set_cookie = resp.headers.get('Set-Cookie', '')
+        if 'auth-token=' in set_cookie:
+            token_value = set_cookie.split('auth-token=')[1].split(';')[0]
+            # Build redirect with cookie set on shared domain
+            response = HttpResponseRedirect('https://design.saasclaw.ai/')
+            response.set_cookie(
+                'auth-token',
+                token_value,
+                domain='.saasclaw.ai',
+                httponly=True,
+                secure=True,
+                samesite='Lax',
+            )
+            return response
+        logger.error("Penpot SSO: no auth-token cookie in response")
+        return JsonResponse({'error': 'No auth cookie from Penpot'}, status=502)
+
+    # Set cookie on shared domain and redirect
+    response = HttpResponseRedirect('https://design.saasclaw.ai/')
+    response.set_cookie(
+        'auth-token',
+        auth_cookie.value,
+        domain='.saasclaw.ai',
+        httponly=True,
+        secure=True,
+        samesite='Lax',
+    )
+    logger.info("Penpot SSO redirect for user %s", request.user.username)
+    return response
+
+
+def _get_penpot_base_url() -> str:
+    """Get Penpot base URL from settings."""
+    from .penpot import PENPOT_BASE_URL
+    return getattr(settings, 'PENPOT_BASE_URL', PENPOT_BASE_URL)
 
 
 @api_view(['GET'])

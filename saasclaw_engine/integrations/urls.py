@@ -7,6 +7,7 @@ from .penpot_views import (
     penpot_projects,
     penpot_files,
     penpot_import,
+    penpot_sso,
 )
 
 urlpatterns = [
@@ -15,4 +16,5 @@ urlpatterns = [
     path('penpot/projects/', penpot_projects, name='penpot_projects'),
     path('penpot/files/<str:project_id>/', penpot_files, name='penpot_files'),
     path('penpot/import/<str:file_id>/', penpot_import, name='penpot_import'),
+    path('penpot/sso/', penpot_sso, name='penpot_sso'),
 ]
