@@ -84,3 +84,30 @@ class FigmaConnection(models.Model):
     def is_connected(self) -> bool:
         """Check if the connection has a non-empty access token."""
         return bool(self.access_token)
+
+
+class PenpotConnection(models.Model):
+    """Stores a user's Penpot credentials for design integration.
+
+    Penpot uses cookie-based auth (no OAuth), so we store the email/password
+    and log in programmatically to get an auth-token cookie.
+    """
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='penpot_connection',
+    )
+    penpot_user_id = models.CharField(max_length=255, blank=True, help_text='Penpot profile ID')
+    penpot_email = models.EmailField()
+    penpot_password = models.CharField(max_length=255, help_text='Generated random password for Penpot')
+    penpot_team_id = models.CharField(max_length=255, blank=True, help_text='Default team ID in Penpot')
+    penpot_project_id = models.CharField(max_length=255, blank=True, help_text='Default project ID in Penpot')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'{self.penpot_email} ({self.user_id})'
+
+    @property
+    def is_connected(self) -> bool:
+        return bool(self.penpot_email and self.penpot_password)

@@ -279,6 +279,10 @@ class SiteSettings(models.Model):
         default=False,
         help_text='Show Figma integration in the UI. Enable only after Figma app review is approved.'
     )
+    penpot_enabled = models.BooleanField(
+        default=True,
+        help_text='Show Penpot integration in the UI. Penpot is self-hosted and always available.'
+    )
 
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
