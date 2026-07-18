@@ -10,6 +10,7 @@ urlpatterns = [
     path('auth/login/', csrf_exempt(views.login_view), name='public-api-login'),
     path('auth/token/', csrf_exempt(views.login_view), name='public-api-token'),  # alias for SimpleJWT-style clients
     path('auth/register/', csrf_exempt(views.register_view), name='public-api-register'),
+    path('auth/exchange-session-token/', csrf_exempt(views.exchange_session_token), name='public-api-exchange-session-token'),
 
     # Projects
     path('projects/', csrf_exempt(views.projects_list_create), name='public-api-projects'),

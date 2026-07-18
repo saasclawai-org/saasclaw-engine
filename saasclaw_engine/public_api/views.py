@@ -198,6 +198,29 @@ def login_view(request):
     })
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def exchange_session_token(request):
+    """Exchange a session (cookie) auth for JWT tokens.
+
+    This endpoint is for users who logged in via social auth (Google/GitHub)
+    and don't have a password. They can call this endpoint while authenticated
+    via their session cookie to obtain JWT tokens for API/SDK use.
+    """
+    user = _get_user(request)
+    if user is None:
+        return Response(
+            {'detail': 'Authentication required.'},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+    refresh = RefreshToken.for_user(user)
+    return Response({
+        'access': str(refresh.access_token),
+        'refresh': str(refresh),
+        'email': user.email,
+    })
+
+
 # ---- Projects ----
 
 @api_view(['GET', 'POST'])
