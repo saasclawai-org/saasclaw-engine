@@ -55,3 +55,32 @@ class InstallationRepository(models.Model):
 
     def __str__(self):
         return self.full_name
+
+
+class FigmaConnection(models.Model):
+    """Stores a user's Figma OAuth credentials for design token extraction."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='figma_connections',
+    )
+    access_token = models.TextField(help_text='Encrypted in production via pgcrypto')
+    refresh_token = models.TextField(blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    figma_user_id = models.CharField(max_length=100, blank=True)
+    figma_email = models.EmailField(blank=True)
+    figma_username = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.figma_email or self.figma_username or self.figma_user_id} ({self.user_id})'
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if the connection has a non-empty access token."""
+        return bool(self.access_token)

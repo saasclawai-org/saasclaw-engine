@@ -573,6 +573,34 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "figma_get_frame",
+            "description": "Fetch a Figma frame as a screenshot image and structured layout data. Use this when the user provides a Figma URL and wants you to match their design. Returns colors, typography, spacing, radii, shadows, and a screenshot URL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Full Figma URL (e.g. https://www.figma.com/design/abc123/MyApp?node-id=1:2)"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "figma_get_design_tokens",
+            "description": "Extract structured design tokens (colors, fonts, spacing, shadows) from a Figma file. Returns CSS-ready values to match the design exactly.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Full Figma URL or file key"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
 ]
 
 

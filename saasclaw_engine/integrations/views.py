@@ -5,11 +5,16 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponseBadRequest, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from .models import GitHubInstallation, InstallationRepository
+from .models import GitHubInstallation, InstallationRepository, FigmaConnection
+from .figma import (
+    get_oauth_url, exchange_code_for_token, refresh_token,
+    parse_figma_url, get_file, get_file_nodes, get_file_images,
+    extract_design_tokens, format_tokens_for_prompt, download_image,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -205,3 +210,142 @@ def _fetch_installation_repos(installation: GitHubInstallation) -> list | None:
         logger.warning("Error fetching repos for installation %s: %s",
                         installation.installation_id, e)
         return None
+
+
+# --- Figma OAuth ---
+
+@login_required
+def figma_connect(request):
+    """Redirect user to Figma OAuth authorization page."""
+    import secrets
+    state = secrets.token_urlsafe(32)
+    request.session['figma_oauth_state'] = state
+    return redirect(get_oauth_url(state))
+
+
+@login_required
+def figma_callback(request):
+    """Handle OAuth callback from Figma, exchange code for tokens."""
+    from django.shortcuts import redirect as _redirect
+
+    code = request.GET.get('code')
+    state = request.GET.get('state')
+    expected_state = request.session.pop('figma_oauth_state', None)
+
+    if not code or not state or state != expected_state:
+        return HttpResponseBadRequest('Invalid OAuth state or missing code.')
+
+    try:
+        token_data = exchange_code_for_token(code)
+    except Exception as e:
+        logger.error("Figma token exchange failed: %s", e)
+        return _redirect('/app/settings/?figma=error')
+
+    from datetime import timedelta
+    from django.utils import timezone
+
+    expires_in = token_data.get('expires_in', 3600)
+    FigmaConnection.objects.update_or_create(
+        user=request.user,
+        defaults={
+            'access_token': token_data.get('access_token', ''),
+            'refresh_token': token_data.get('refresh_token', ''),
+            'expires_at': timezone.now() + timedelta(seconds=expires_in),
+            'figma_user_id': '',
+        },
+    )
+
+    # Try to fetch user info
+    try:
+        import requests
+        resp = requests.get('https://api.figma.com/v1/me',
+                           headers={'X-Figma-Token': token_data['access_token']}, timeout=10)
+        if resp.ok:
+            me = resp.json()
+            conn = FigmaConnection.objects.get(user=request.user)
+            conn.figma_email = me.get('email', '')
+            conn.figma_username = me.get('handle', '')
+            conn.figma_user_id = str(me.get('id', ''))
+            conn.save(update_fields=['figma_email', 'figma_username', 'figma_user_id'])
+    except Exception:
+        pass
+
+    return _redirect('/app/settings/?figma=connected')
+
+
+@login_required
+def figma_disconnect(request):
+    """Remove the user's Figma connection."""
+    FigmaConnection.objects.filter(user=request.user).delete()
+    return JsonResponse({'ok': True})
+
+
+@login_required
+def figma_status(request):
+    """Check if user has a connected Figma account."""
+    conn = FigmaConnection.objects.filter(user=request.user).first()
+    return JsonResponse({
+        'connected': bool(conn and conn.is_connected),
+        'email': conn.figma_email if conn else '',
+        'username': conn.figma_username if conn else '',
+    })
+
+
+@login_required
+def figma_extract_tokens(request):
+    """Extract design tokens from a Figma URL.
+
+    POST body: {"url": "https://www.figma.com/design/..."}
+    Returns: {tokens: {...}, prompt_text: "...", screenshot_url: "..."}
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, KeyError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    url = body.get('url', '').strip()
+    if not url:
+        return JsonResponse({'error': 'URL required'}, status=400)
+
+    parsed = parse_figma_url(url)
+    if not parsed:
+        return JsonResponse({'error': 'Invalid Figma URL'}, status=400)
+
+    conn = FigmaConnection.objects.filter(user=request.user).first()
+    if not conn or not conn.is_connected:
+        return JsonResponse({'error': 'Figma not connected'}, status=403)
+
+    try:
+        # Fetch file data for the specific node (or whole file)
+        if parsed['node_id']:
+            file_data = get_file(parsed['file_key'], conn.access_token, ids=parsed['node_id'])
+        else:
+            file_data = get_file(parsed['file_key'], conn.access_token, depth=3)
+
+        tokens = extract_design_tokens(file_data, parsed['node_id'])
+        prompt_text = format_tokens_for_prompt(tokens)
+
+        # Get screenshot
+        screenshot_url = None
+        if parsed['node_id']:
+            try:
+                images = get_file_images(
+                    parsed['file_key'], [parsed['node_id']], conn.access_token,
+                    format='png', scale=2.0,
+                )
+                screenshot_url = images.get('images', {}).get(parsed['node_id'])
+            except Exception:
+                pass
+
+        return JsonResponse({
+            'tokens': tokens,
+            'prompt_text': prompt_text,
+            'screenshot_url': screenshot_url,
+            'file_name': file_data.get('name', ''),
+        })
+    except Exception as e:
+        logger.error("Figma token extraction failed: %s", e)
+        return JsonResponse({'error': str(e)}, status=500)

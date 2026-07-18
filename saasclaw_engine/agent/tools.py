@@ -1431,6 +1431,68 @@ def _project_status_tool(workspace_path, section=""):
 
     return "\n".join(parts)
 
+def _figma_get_frame_tool(workspace_path: str, url: str, session_id: str | None = None) -> str:
+    """Fetch a Figma frame: screenshot + structured layout data for the wizard."""
+    import os, sys, django
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    sys.path.insert(0, "/srv/saasclaw/app")
+    if not django.apps.apps.ready:
+        django.setup()
+
+    from saasclaw_engine.integrations.figma import (
+        parse_figma_url, get_file, get_file_nodes, get_file_images,
+        extract_design_tokens, format_tokens_for_prompt,
+    )
+    from saasclaw_engine.integrations.models import FigmaConnection
+    from saasclaw_engine.studio_models.models import Workspace
+
+    parsed = parse_figma_url(url)
+    if not parsed:
+        return f"Error: Could not parse Figma URL '{url}'. Expected: https://www.figma.com/design/<key>/<name>?node-id=<id>"
+
+    # Find the project owner's Figma connection
+    ws = Workspace.objects.filter(local_path=workspace_path).first()
+    if not ws:
+        return "Error: could not resolve project workspace."
+    conn = FigmaConnection.objects.filter(user=ws.project.owner).first()
+    if not conn or not conn.is_connected:
+        return "Error: Figma not connected. Ask the user to connect their Figma account in Settings."
+
+    try:
+        if parsed['node_id']:
+            file_data = get_file(parsed['file_key'], conn.access_token, ids=parsed['node_id'])
+        else:
+            file_data = get_file(parsed['file_key'], conn.access_token, depth=3)
+
+        tokens = extract_design_tokens(file_data, parsed['node_id'])
+        prompt_text = format_tokens_for_prompt(tokens)
+
+        # Try to get screenshot URL
+        screenshot_url = None
+        if parsed['node_id']:
+            try:
+                images = get_file_images(
+                    parsed['file_key'], [parsed['node_id']], conn.access_token,
+                    format='png', scale=2.0,
+                )
+                screenshot_url = images.get('images', {}).get(parsed['node_id'])
+            except Exception:
+                pass
+
+        result_parts = [prompt_text]
+        if screenshot_url:
+            result_parts.append(f"\n## Screenshot\n{ screenshot_url}")
+        result_parts.append(f"\nFile: {file_data.get('name', 'unknown')}")
+        return "\n".join(result_parts)
+    except Exception as exc:
+        return f"Error fetching Figma data: {exc}"
+
+
+def _figma_get_tokens_tool(workspace_path: str, url: str, session_id: str | None = None) -> str:
+    """Extract structured design tokens from a Figma URL for the wizard."""
+    return _figma_get_frame_tool(workspace_path, url, session_id)
+
+
 def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = False, session_id: str | None = None) -> str:
     """Dispatch a tool call by name.
     
@@ -1472,6 +1534,8 @@ def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = 
         "spawn_subtask": lambda: spawn_subtask(workspace_path, args.get("task", ""), args.get("model", "")),
         "check_subtask": lambda: check_subtask(workspace_path, args.get("task_id", "")),
         "supabase_sql": lambda: supabase_sql(workspace_path, args.get("sql", "")),
+        "figma_get_frame": lambda: _figma_get_frame_tool(workspace_path, args.get("url", ""), session_id=session_id),
+        "figma_get_design_tokens": lambda: _figma_get_tokens_tool(workspace_path, args.get("url", ""), session_id=session_id),
     }
     handler = handlers.get(name)
     if not handler:
