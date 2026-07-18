@@ -225,9 +225,11 @@ def extract_penpot_design_tokens(file_data: dict) -> dict:
     return tokens
 
 
-def _walk_penpot_node(node: dict, tokens: dict, seen_colors: set,
+def _walk_penpot_node(node, tokens: dict, seen_colors: set,
                        seen_radii: set, seen_spacing: set, depth: int = 0):
     """Recursively walk a Penpot node tree extracting tokens."""
+    if not isinstance(node, dict):
+        return
     node_type = node.get('type', '')
 
     # Count frames and components
