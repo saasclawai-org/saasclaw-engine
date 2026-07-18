@@ -247,13 +247,28 @@ def projects_list_create(request):
         is_active=True,
     )
 
+    # Determine runtime kind from framework/template
+    from saasclaw_engine.deployments.models import Environment
+    _framework = serializer.validated_data['framework']
+    _RUNTIME_MAP = {
+        'django': 'django', 'react-django': 'django', 'flask': 'django',
+        'htmx': 'django', 'fastapi': 'django',
+        'nextjs': 'node_ssr',
+        'react': 'node_static', 'vue': 'node_static', 'svelte': 'node_static',
+        'supabase': 'node_static', 'firebase': 'node_static',
+        'hugo': 'static',
+        'dotnet': 'dotnet', 'react-dotnet': 'dotnet', 'react-dotnet-crm': 'dotnet',
+        'spring-boot': 'java',
+    }
+    _runtime_kind = _RUNTIME_MAP.get(_framework, 'static')
+
     Environment.objects.create(
         project=project,
         name=Environment.Name.PREVIEW,
         slug='preview',
         domain=f'{slug}.preview.saasclaw.ai',
         is_primary=True,
-        runtime_kind=Environment.RuntimeKind.STATIC,
+        runtime_kind=_runtime_kind,
     )
 
     return Response(ProjectSerializer(project).data, status=status.HTTP_201_CREATED)
