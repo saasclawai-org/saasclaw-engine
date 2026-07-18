@@ -275,6 +275,10 @@ class SiteSettings(models.Model):
         default=True,
         help_text='Allow users to add their own LLM provider keys. Disable for enterprise installs where only platform keys are used.'
     )
+    figma_enabled = models.BooleanField(
+        default=False,
+        help_text='Show Figma integration in the UI. Enable only after Figma app review is approved.'
+    )
 
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(

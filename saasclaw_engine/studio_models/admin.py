@@ -19,6 +19,9 @@ class SiteSettingsAdmin(admin.ModelAdmin):
         ('Training', {
             'fields': ('require_training_before_project',),
         }),
+        ('Integrations', {
+            'fields': ('figma_enabled', 'allow_personal_keys'),
+        }),
     )
 
 
