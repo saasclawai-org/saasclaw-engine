@@ -665,9 +665,11 @@ def projects_list_create(request):
     )
 
     # Use the same template system as the website
-    from studio.views.helpers import _create_bare_repo, _run_as_saasclaw
+    from studio.views.helpers import _create_bare_repo, _run_as_saasclaw, _ensure_workspace, _template_env_defaults, _allocate_port
     from studio.views.template_defs import _create_from_template
     from studio.views.project_settings import _create_default_saasclaw_config
+    from saasclaw_engine.deployments.models import Environment
+    from django.conf import settings as dj_settings
 
     workspace_path = f'/srv/saasclaw/projects/{slug}/repo'
     _run_as_saasclaw(['mkdir', '-p', f'/srv/saasclaw/projects/{slug}'], capture_output=True, timeout=5)
@@ -677,48 +679,56 @@ def projects_list_create(request):
     fw = serializer.validated_data['framework']
     template_name = fw if fw in ('html', 'react', 'vite_react', 'nextjs', 'vue', 'svelte',
                                    'django', 'flask', 'fastapi', 'supabase', 'hugo',
-                                   'dotnet', 'react-dotnet', 'spring-boot') else 'html'
+                                   'dotnet', 'react-dotnet', 'spring-boot', 'firebase',
+                                   'htmx', 'react-django') else 'html'
     _create_from_template(template_name, workspace_path, name, slug, bare_repo)
 
     # Ensure .saasclaw config exists
     if not os.path.isfile(os.path.join(workspace_path, '.saasclaw')):
         _create_default_saasclaw_config(workspace_path, fw)
 
-    # Set workspace_root and repo_url on the project
+    # Set workspace_root, repo_url, domains on the project (same as website)
     project.workspace_root = workspace_path
     project.repo_url = bare_repo
-    project.save(update_fields=['workspace_root', 'repo_url'])
+    project.preview_domain = f'{slug}.{dj_settings.PREVIEW_BASE_DOMAIN}'
+    project.production_domain = f'{slug}.{dj_settings.APP_BASE_DOMAIN}'
+    project.save(update_fields=['workspace_root', 'repo_url', 'preview_domain', 'production_domain'])
+
+    # Create environments with framework-appropriate defaults (same as website)
+    env_defaults = _template_env_defaults(template_name)
+    is_django = env_defaults.get('runtime_kind') == 'django'
+    is_node_ssr = env_defaults.get('runtime_kind') == 'node_ssr'
+    needs_port = is_django or is_node_ssr
+
+    try:
+        preview_port = _allocate_port('preview') if needs_port else None
+        prod_port = _allocate_port('production') if needs_port else None
+        Environment.objects.create(
+            project=project, name=Environment.Name.PREVIEW, slug='preview',
+            domain=project.preview_domain, is_primary=True,
+            app_port=preview_port,
+            **env_defaults,
+        )
+        Environment.objects.create(
+            project=project, name=Environment.Name.PRODUCTION, slug='production',
+            domain=project.production_domain,
+            app_port=prod_port,
+            **env_defaults,
+        )
+    except Exception as exc:
+        logger.exception("Environment creation failed for %s", slug)
+
+    # Create workspace record (same as website)
+    try:
+        _ensure_workspace(project, user)
+    except Exception as exc:
+        logger.warning("Workspace setup failed for %s: %s", slug, exc)
 
     Workspace.objects.create(
         project=project,
         user=user,
         local_path=workspace_path,
         is_active=True,
-    )
-
-    # Determine runtime kind from framework/template
-    from saasclaw_engine.deployments.models import Environment
-    _framework = serializer.validated_data['framework']
-    _RUNTIME_MAP = {
-        'django': 'django', 'react-django': 'django', 'flask': 'django',
-        'htmx': 'django', 'fastapi': 'django',
-        'nextjs': 'node_ssr',
-        'react': 'node_static', 'vue': 'node_static', 'svelte': 'node_static',
-        'supabase': 'node_static', 'firebase': 'node_static',
-        'hugo': 'static',
-        'dotnet': 'dotnet', 'react-dotnet': 'dotnet', 'react-dotnet-crm': 'dotnet',
-        'spring-boot': 'java',
-        'android': 'android',
-    }
-    _runtime_kind = _RUNTIME_MAP.get(_framework, 'static')
-
-    Environment.objects.create(
-        project=project,
-        name=Environment.Name.PREVIEW,
-        slug='preview',
-        domain=f'{slug}.preview.saasclaw.ai',
-        is_primary=True,
-        runtime_kind=_runtime_kind,
     )
 
     return Response(ProjectSerializer(project).data, status=status.HTTP_201_CREATED)
