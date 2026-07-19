@@ -381,6 +381,37 @@ def github_redirect(request):
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
+def _seed_initial_content(workspace_path, framework, name):
+    """Seed minimal starter files so the project can deploy immediately."""
+    fw = framework.lower()
+    if fw in ('html', 'blank', ''):
+        with open(os.path.join(workspace_path, 'index.html'), 'w') as f:
+            f.write(f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{name}</title>
+    <style>
+        body {{ font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }}
+        h1 {{ font-size: 3rem; margin: 0; }}
+        p {{ opacity: 0.8; font-size: 1.2rem; }}
+    </style>
+</head>
+<body>
+    <div style="text-align:center">
+        <h1>🚀 {name}</h1>
+        <p>Built with SaaSClaw</p>
+    </div>
+</body>
+</html>
+''')
+    else:
+        # For non-HTML frameworks, create a README so the repo isn't empty
+        with open(os.path.join(workspace_path, 'README.md'), 'w') as f:
+            f.write(f'# {name}\n\nCreated with SaaSClaw. Framework: {framework}\n')
+
+
 def projects_list_create(request):
     """List user's projects or create a new one."""
     user = _get_user(request)
@@ -416,8 +447,29 @@ def projects_list_create(request):
 
     # Initialize git repo so agent tools work
     subprocess.run(['git', 'init'], cwd=workspace_path, capture_output=True, timeout=10)
+    subprocess.run(['git', 'branch', '-m', 'master', 'main'], cwd=workspace_path, capture_output=True, timeout=5)
     subprocess.run(['git', 'config', 'user.email', 'agent@saasclaw.ai'], cwd=workspace_path, capture_output=True, timeout=5)
     subprocess.run(['git', 'config', 'user.name', 'SaaSClaw Agent'], cwd=workspace_path, capture_output=True, timeout=5)
+
+    # Create bare repo for deploys
+    bare_repo = f'/srv/saasclaw/git/{slug}.git'
+    os.makedirs(bare_repo, exist_ok=True)
+    subprocess.run(['git', 'init', '--bare', bare_repo], capture_output=True, timeout=10)
+    subprocess.run(['git', 'remote', 'add', 'origin', bare_repo], cwd=workspace_path, capture_output=True, timeout=5)
+
+    # Seed initial content based on framework
+    _seed_initial_content(workspace_path, serializer.validated_data['framework'], name)
+    subprocess.run(['git', 'add', '-A'], cwd=workspace_path, capture_output=True, timeout=10)
+    subprocess.run(
+        ['git', 'commit', '-m', 'Initial commit'],
+        cwd=workspace_path, capture_output=True, timeout=10,
+    )
+    subprocess.run(['git', 'push', 'origin', 'main'], cwd=workspace_path, capture_output=True, timeout=10)
+
+    # Set workspace_root and repo_url on the project
+    project.workspace_root = workspace_path
+    project.repo_url = bare_repo
+    project.save(update_fields=['workspace_root', 'repo_url'])
 
     Workspace.objects.create(
         project=project,
