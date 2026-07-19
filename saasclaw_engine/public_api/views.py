@@ -664,29 +664,25 @@ def projects_list_create(request):
         description=serializer.validated_data.get('description', ''),
     )
 
+    # Use the same template system as the website
+    from studio.views.helpers import _create_bare_repo, _run_as_saasclaw
+    from studio.views.template_defs import _create_from_template
+    from studio.views.project_settings import _create_default_saasclaw_config
+
     workspace_path = f'/srv/saasclaw/projects/{slug}/repo'
-    os.makedirs(workspace_path, exist_ok=True)
+    _run_as_saasclaw(['mkdir', '-p', f'/srv/saasclaw/projects/{slug}'], capture_output=True, timeout=5)
 
-    # Initialize git repo so agent tools work
-    subprocess.run(['git', 'init'], cwd=workspace_path, capture_output=True, timeout=10)
-    subprocess.run(['git', 'branch', '-m', 'master', 'main'], cwd=workspace_path, capture_output=True, timeout=5)
-    subprocess.run(['git', 'config', 'user.email', 'agent@saasclaw.ai'], cwd=workspace_path, capture_output=True, timeout=5)
-    subprocess.run(['git', 'config', 'user.name', 'SaaSClaw Agent'], cwd=workspace_path, capture_output=True, timeout=5)
+    # Create bare repo + starter template (same as website)
+    bare_repo = _create_bare_repo(slug)
+    fw = serializer.validated_data['framework']
+    template_name = fw if fw in ('html', 'react', 'vite_react', 'nextjs', 'vue', 'svelte',
+                                   'django', 'flask', 'fastapi', 'supabase', 'hugo',
+                                   'dotnet', 'react-dotnet', 'spring-boot') else 'html'
+    _create_from_template(template_name, workspace_path, name, slug, bare_repo)
 
-    # Create bare repo for deploys
-    bare_repo = f'/srv/saasclaw/git/{slug}.git'
-    os.makedirs(bare_repo, exist_ok=True)
-    subprocess.run(['git', 'init', '--bare', bare_repo], capture_output=True, timeout=10)
-    subprocess.run(['git', 'remote', 'add', 'origin', bare_repo], cwd=workspace_path, capture_output=True, timeout=5)
-
-    # Seed initial content based on framework
-    _seed_initial_content(workspace_path, serializer.validated_data['framework'], name)
-    subprocess.run(['git', 'add', '-A'], cwd=workspace_path, capture_output=True, timeout=10)
-    subprocess.run(
-        ['git', 'commit', '-m', 'Initial commit'],
-        cwd=workspace_path, capture_output=True, timeout=10,
-    )
-    subprocess.run(['git', 'push', 'origin', 'main'], cwd=workspace_path, capture_output=True, timeout=10)
+    # Ensure .saasclaw config exists
+    if not os.path.isfile(os.path.join(workspace_path, '.saasclaw')):
+        _create_default_saasclaw_config(workspace_path, fw)
 
     # Set workspace_root and repo_url on the project
     project.workspace_root = workspace_path
