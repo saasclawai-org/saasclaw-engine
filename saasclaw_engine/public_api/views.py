@@ -1065,7 +1065,6 @@ def session_send(request, slug, session_id):
         finally:
             save_token_usage(project, session_id_str, 'zai', actual_model, total_usage)
             mark_session_idle(session_id_str)
-            connection.close()
 
         yield 'data: [DONE]\n\n'
 
