@@ -17,6 +17,7 @@ from .deploy_infra import (
     _load_env_file, _serialize_env_file, _write_text, _normalize_ownership,
     _run_command, _slugify_system_name,
     _ensure_nginx_proxy, _wait_for_http_healthcheck,
+    _write_and_validate_nginx,
 )
 
 if TYPE_CHECKING:
@@ -232,7 +233,21 @@ def _deploy_android_environment(
     # Write nginx config for static file serving (APK + landing page)
     nginx_conf = f"""server {{
     listen 80;
+    listen [::]:80;
     server_name {environment.domain};
+    return 301 https://$host$request_uri;
+}}
+
+server {{
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name {environment.domain};
+
+    ssl_certificate /etc/letsencrypt/live/preview.saasclaw.ai/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/preview.saasclaw.ai/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
     root {runtime_root};
     index index.html;
 
@@ -246,18 +261,8 @@ def _deploy_android_environment(
     }}
 }}
 """
-    nginx_conf_path = Path(f'/etc/nginx/sites-available/{service_name}')
-    nginx_enabled = Path(f'/etc/nginx/sites-enabled/{service_name}')
-
-    _write_text(nginx_conf_path, nginx_conf)
-    _run_command(
-        f'sudo ln -sf {nginx_conf_path} {nginx_enabled}',
-        Path('/'), log_file,
-    )
-    _run_command(
-        'sudo nginx -t && sudo systemctl reload nginx',
-        Path('/'), log_file,
-    )
+    if not _write_and_validate_nginx(service_name, nginx_conf, log_file):
+        raise RuntimeError(f'Failed to configure nginx for {service_name}')
 
     with log_file.open('a', encoding='utf-8') as handle:
         handle.write(f'APK served at: https://{environment.domain}/{apk_filename}\n')

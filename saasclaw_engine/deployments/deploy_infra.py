@@ -73,7 +73,7 @@ def _normalize_ownership(path: Path, log_file: Path = None) -> None:
                 handle.write(f'[ownership normalize failed: {e}]\n')
 
 
-def _run_command(command: str, cwd: Path, log_file: Path, env: dict = None) -> None:
+def _run_command(command: str, cwd: Path, log_file: Path, env: dict = None, timeout: int = 300) -> None:
     """Run a shell command, optionally with extra env vars."""
     import os as _os
     full_env = _os.environ.copy()
@@ -82,7 +82,7 @@ def _run_command(command: str, cwd: Path, log_file: Path, env: dict = None) -> N
     with log_file.open('a', encoding='utf-8') as handle:
         handle.write(f'$ {command}\n')
         result = subprocess.run(
-            command, shell=True, cwd=str(cwd), capture_output=True, text=True, timeout=300,
+            command, shell=True, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
             env=full_env,
         )
         if result.stdout:
@@ -186,9 +186,21 @@ def _refresh_repo_checkout_for_deploy(project: Project, repo_path: Path, log_fil
     else:
         _assert_repo_binding(project, repo_path)
         branch = project.repo_default_branch or 'main'
+
+        # Check if remote is a local bare repo (wizard-managed, no GitHub)
+        import subprocess as _sp_remote
+        _remote_url_check = _sp_remote.run(
+            ['git', 'remote', 'get-url', 'origin'], cwd=str(repo_path),
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        _is_local_remote = _remote_url_check.startswith('/')
+
         # Use GitHub App token for auth if this is a GitHub repo
         is_github = project.repo_provider == 'github' or 'github.com' in (project.repo_url or '')
-        if is_github and project.repo_owner and project.repo_name:
+        if _is_local_remote:
+            # Local bare repo — no GitHub auth needed
+            logger.info('Local bare repo detected for %s, skipping GitHub auth', project.slug)
+        elif is_github and project.repo_owner and project.repo_name:
             try:
                 from saasclaw_engine.integrations.models import GitHubInstallation
                 from saasclaw_engine.integrations.github import create_installation_access_token, _git_auth_args
@@ -211,7 +223,9 @@ def _refresh_repo_checkout_for_deploy(project: Project, repo_path: Path, log_fil
             import subprocess as _sp2
             url_result = _sp2.run(['git', 'remote', 'get-url', 'origin'], cwd=str(repo_path), capture_output=True, text=True, timeout=5)
             remote_url = url_result.stdout.strip()
-            if 'x-access-token' in remote_url or remote_url.startswith('https://github.com/'):
+            if _is_local_remote:
+                pass  # Don't touch local bare remote URLs
+            elif 'x-access-token' in remote_url or remote_url.startswith('https://github.com/'):
                 m = re.search(r'github\.com[:/](.+?)(?:\.git)?$', remote_url)
                 if m:
                     ssh_url = f'git@github.com:{m.group(1)}.git'
@@ -223,10 +237,15 @@ def _refresh_repo_checkout_for_deploy(project: Project, repo_path: Path, log_fil
         _run_command('find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true', repo_path, log_file)
         _normalize_ownership(repo_path / '.git', log_file)
 
-        git_ssh = 'GIT_SSH_COMMAND="ssh -i /srv/saasclaw/.ssh/id_ed25519_deploy -o StrictHostKeyChecking=no" '
-        _run_command(f'{git_ssh}git fetch origin', repo_path, log_file)
-        _run_command(f'{git_ssh}git checkout {branch}', repo_path, log_file)
-        _run_command(f'{git_ssh}git reset --hard origin/{branch}', repo_path, log_file)
+        if _is_local_remote:
+            _run_command('git fetch origin', repo_path, log_file)
+            _run_command(f'git checkout {branch}', repo_path, log_file)
+            _run_command(f'git reset --hard origin/{branch}', repo_path, log_file)
+        else:
+            git_ssh = 'GIT_SSH_COMMAND="ssh -i /srv/saasclaw/.ssh/id_ed25519_deploy -o StrictHostKeyChecking=no" '
+            _run_command(f'{git_ssh}git fetch origin', repo_path, log_file)
+            _run_command(f'{git_ssh}git checkout {branch}', repo_path, log_file)
+            _run_command(f'{git_ssh}git reset --hard origin/{branch}', repo_path, log_file)
 
 
 def _slugify_system_name(value: str) -> str:
