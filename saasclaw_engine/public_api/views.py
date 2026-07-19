@@ -1578,15 +1578,39 @@ def provider_keys_list_create(request):
     }, status=201 if created else 200)
 
 
-@api_view(['DELETE'])
+@api_view(['DELETE', 'PUT', 'PATCH'])
 @permission_classes([IsAuthenticated])
 def provider_key_delete(request, key_id):
-    """Delete a provider key."""
+    """Delete or update a provider key."""
     user = request.user
     from saasclaw_engine.studio_models.models import ProviderKey
     try:
         pk = ProviderKey.objects.get(id=key_id, user=user)
     except ProviderKey.DoesNotExist:
         return Response({'detail': 'Not found.'}, status=404)
-    pk.delete()
-    return Response({'deleted': True})
+
+    if request.method == 'DELETE':
+        pk.delete()
+        return Response({'deleted': True})
+
+    if request.method in ('PUT', 'PATCH'):
+        api_key = request.data.get('api_key')
+        default_model = request.data.get('default_model')
+        provider = request.data.get('provider')
+        if api_key:
+            pk.api_key = api_key
+        if default_model is not None:
+            pk.default_model = default_model
+        if provider:
+            pk.provider = provider
+        pk.save()
+        return Response({
+            'id': pk.id,
+            'provider': pk.provider,
+            'api_key_masked': pk.api_key[:8] + '...' + pk.api_key[-4:] if len(pk.api_key) > 12 else '***',
+            'default_model': pk.default_model,
+            'is_active': pk.is_active,
+            'is_platform': pk.is_platform,
+        })
+
+    return Response({'detail': 'Method not allowed.'}, status=405)
