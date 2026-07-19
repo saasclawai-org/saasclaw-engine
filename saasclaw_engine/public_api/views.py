@@ -1138,3 +1138,122 @@ def logs_view(request, slug, source):
     lines = int(request.query_params.get('lines', 50))
     result = _read_logs_tool(workspace_path='', source=source, lines=lines, project_slug=slug)
     return Response({'result': result})
+
+# ---- Account / Profile ----
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def account_profile(request):
+    """Get user profile, social accounts, and stats."""
+    user = request.user
+
+    # Social accounts
+    from allauth.socialaccount.models import SocialAccount
+    socials = []
+    for sa in SocialAccount.objects.filter(user=user):
+        socials.append({
+            'provider': sa.provider,
+            'uid': sa.uid,
+            'name': sa.extra_data.get('name', '') if sa.extra_data else '',
+            'avatar': sa.extra_data.get('avatar_url', '') if sa.extra_data else '',
+            'email': sa.extra_data.get('email', '') if sa.extra_data else '',
+        })
+
+    # Stats
+    from saasclaw_engine.projects.models import Project
+    project_count = Project.objects.filter(owner=user).count()
+    deploy_count = user.deployments_triggered.count()
+
+    # API key count
+    from .models import ApiKey
+    api_key_count = ApiKey.objects.filter(user=user, active=True).count()
+
+    # Provider keys
+    from saasclaw_engine.studio_models.models import ProviderKey
+    provider_keys = []
+    for pk in ProviderKey.objects.filter(user=user):
+        masked = pk.api_key[:8] + '...' + pk.api_key[-4:] if len(pk.api_key) > 12 else '***'
+        provider_keys.append({
+            'id': pk.id,
+            'provider': pk.provider,
+            'api_key_masked': masked,
+            'default_model': pk.default_model,
+            'is_active': pk.is_active,
+            'is_platform': pk.is_platform,
+        })
+
+    return Response({
+        'email': user.email,
+        'username': user.username,
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'date_joined': user.date_joined.isoformat() if user.date_joined else '',
+        'last_login': user.last_login.isoformat() if user.last_login else '',
+        'is_superuser': user.is_superuser,
+        'social_accounts': socials,
+        'stats': {
+            'projects': project_count,
+            'deploys': deploy_count,
+            'api_keys': api_key_count,
+        },
+        'provider_keys': provider_keys,
+    })
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def provider_keys_list_create(request):
+    """List or add LLM provider API keys."""
+    user = request.user
+    from saasclaw_engine.studio_models.models import ProviderKey
+
+    if request.method == 'GET':
+        keys = []
+        for pk in ProviderKey.objects.filter(user=user):
+            masked = pk.api_key[:8] + '...' + pk.api_key[-4:] if len(pk.api_key) > 12 else '***'
+            keys.append({
+                'id': pk.id,
+                'provider': pk.provider,
+                'api_key_masked': masked,
+                'default_model': pk.default_model,
+                'is_active': pk.is_active,
+                'is_platform': pk.is_platform,
+                'created_at': pk.created_at.isoformat(),
+            })
+        return Response({'keys': keys})
+
+    # POST — create/update
+    provider = request.data.get('provider', '').strip()
+    api_key = request.data.get('api_key', '').strip()
+    default_model = request.data.get('default_model', '').strip()
+
+    if not provider or not api_key:
+        return Response({'detail': 'provider and api_key are required.'}, status=400)
+
+    obj, created = ProviderKey.objects.update_or_create(
+        user=user, provider=provider,
+        defaults={'api_key': api_key, 'default_model': default_model, 'is_active': True},
+    )
+    masked = api_key[:8] + '...' + api_key[-4:] if len(api_key) > 12 else '***'
+    return Response({
+        'id': obj.id,
+        'provider': obj.provider,
+        'api_key_masked': masked,
+        'default_model': obj.default_model,
+        'is_active': obj.is_active,
+        'created': created,
+    }, status=201 if created else 200)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def provider_key_delete(request, key_id):
+    """Delete a provider key."""
+    user = request.user
+    from saasclaw_engine.studio_models.models import ProviderKey
+    try:
+        pk = ProviderKey.objects.get(id=key_id, user=user)
+    except ProviderKey.DoesNotExist:
+        return Response({'detail': 'Not found.'}, status=404)
+    pk.delete()
+    return Response({'deleted': True})

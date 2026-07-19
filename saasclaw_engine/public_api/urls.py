@@ -50,4 +50,9 @@ urlpatterns = [
     path('admin/keys/', csrf_exempt(api_keys_list_create), name='public-api-keys-list-create'),
     path('admin/keys/<str:key_id>/revoke/', csrf_exempt(api_key_revoke), name='public-api-key-revoke'),
     path('admin/keys/<str:key_id>/', csrf_exempt(api_key_delete), name='public-api-key-delete'),
+
+    # Account / Profile
+    path('account/', csrf_exempt(views.account_profile), name='public-api-account-profile'),
+    path('account/provider-keys/', csrf_exempt(views.provider_keys_list_create), name='public-api-provider-keys'),
+    path('account/provider-keys/<str:key_id>/', csrf_exempt(views.provider_key_delete), name='public-api-provider-key-delete'),
 ]
