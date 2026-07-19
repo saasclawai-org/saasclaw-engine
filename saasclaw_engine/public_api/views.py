@@ -379,8 +379,6 @@ def github_redirect(request):
 
 # ---- Projects ----
 
-@api_view(['GET', 'POST'])
-@permission_classes([IsAuthenticated])
 def _seed_initial_content(workspace_path, framework, name):
     """Seed minimal starter files so the project can deploy immediately."""
     fw = framework.lower()
@@ -412,6 +410,8 @@ def _seed_initial_content(workspace_path, framework, name):
             f.write(f'# {name}\n\nCreated with SaaSClaw. Framework: {framework}\n')
 
 
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def projects_list_create(request):
     """List user's projects or create a new one."""
     user = _get_user(request)
