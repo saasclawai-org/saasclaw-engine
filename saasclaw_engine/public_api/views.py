@@ -382,9 +382,31 @@ def github_redirect(request):
 def _seed_initial_content(workspace_path, framework, name):
     """Seed minimal starter files so the project can deploy immediately."""
     fw = framework.lower()
+    safe_name = name.replace("'", "\\'")
+
     if fw in ('html', 'blank', ''):
-        with open(os.path.join(workspace_path, 'index.html'), 'w') as f:
-            f.write(f'''<!DOCTYPE html>
+        _seed_html(workspace_path, safe_name)
+    elif fw in ('react', 'vite_react'):
+        _seed_react(workspace_path, safe_name)
+    elif fw == 'nextjs':
+        _seed_nextjs(workspace_path, safe_name)
+    elif fw == 'vue':
+        _seed_vue(workspace_path, safe_name)
+    elif fw == 'svelte':
+        _seed_svelte(workspace_path, safe_name)
+    elif fw in ('django', 'flask', 'fastapi', 'react-django'):
+        _seed_python(workspace_path, fw)
+    elif fw == 'android':
+        _seed_readme(workspace_path, name, framework)
+    elif fw in ('dotnet', 'spring-boot'):
+        _seed_readme(workspace_path, name, framework)
+    else:
+        _seed_readme(workspace_path, name, framework)
+
+
+def _seed_html(path, name):
+    with open(os.path.join(path, 'index.html'), 'w') as f:
+        f.write(f'''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -404,10 +426,210 @@ def _seed_initial_content(workspace_path, framework, name):
 </body>
 </html>
 ''')
-    else:
-        # For non-HTML frameworks, create a README so the repo isn't empty
-        with open(os.path.join(workspace_path, 'README.md'), 'w') as f:
-            f.write(f'# {name}\n\nCreated with SaaSClaw. Framework: {framework}\n')
+
+
+def _seed_readme(path, name, framework):
+    with open(os.path.join(path, 'README.md'), 'w') as f:
+        f.write(f'# {name}\n\nCreated with SaaSClaw. Framework: {framework}\n')
+
+
+def _seed_react(path, name):
+    os.makedirs(os.path.join(path, 'src'), exist_ok=True)
+    with open(os.path.join(path, 'package.json'), 'w') as f:
+        import json
+        json.dump({
+            'name': name.lower().replace(' ', '-'),
+            'private': True,
+            'version': '0.0.0',
+            'type': 'module',
+            'scripts': {
+                'dev': 'vite',
+                'build': 'vite build',
+                'preview': 'vite preview',
+            },
+            'dependencies': {
+                'react': '^18.3.1',
+                'react-dom': '^18.3.1',
+            },
+            'devDependencies': {
+                '@vitejs/plugin-react': '^4.3.1',
+                'vite': '^5.4.0',
+            },
+        }, f, indent=2)
+    with open(os.path.join(path, 'vite.config.js'), 'w') as f:
+        f.write('''import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+})
+''')
+    with open(os.path.join(path, 'index.html'), 'w') as f:
+        f.write('''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>App</title>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
+''')
+    with open(os.path.join(path, 'src', 'main.jsx'), 'w') as f:
+        f.write('''import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)
+''')
+    with open(os.path.join(path, 'src', 'App.jsx'), 'w') as f:
+        f.write('''import React from 'react'
+
+export default function App() {
+  return (
+    <div style={{
+      fontFamily: 'system-ui, sans-serif',
+      textAlign: 'center',
+      padding: '4rem 1rem',
+    }}>
+      <h1>🚀 ''' + name + '''</h1>
+      <p>Built with SaaSClaw</p>
+    </div>
+  )
+}
+''')
+
+
+def _seed_nextjs(path, name):
+    # Next.js needs full structure — seed README, deploy will use wizard to build
+    _seed_readme(path, name, 'nextjs')
+
+
+def _seed_vue(path, name):
+    os.makedirs(os.path.join(path, 'src'), exist_ok=True)
+    with open(os.path.join(path, 'package.json'), 'w') as f:
+        import json
+        json.dump({
+            'name': name.lower().replace(' ', '-'),
+            'private': True,
+            'version': '0.0.0',
+            'type': 'module',
+            'scripts': {
+                'dev': 'vite',
+                'build': 'vite build',
+                'preview': 'vite preview',
+            },
+            'dependencies': {
+                'vue': '^3.4.0',
+            },
+            'devDependencies': {
+                '@vitejs/plugin-vue': '^5.0.0',
+                'vite': '^5.4.0',
+            },
+        }, f, indent=2)
+    with open(os.path.join(path, 'vite.config.js'), 'w') as f:
+        f.write('''import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+
+export default defineConfig({
+  plugins: [vue()],
+})
+''')
+    with open(os.path.join(path, 'index.html'), 'w') as f:
+        f.write('''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>App</title>
+</head>
+<body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>
+''')
+    with open(os.path.join(path, 'src', 'main.js'), 'w') as f:
+        f.write('''import { createApp } from 'vue'
+import App from './App.vue'
+
+createApp(App).mount('#app')
+''')
+    with open(os.path.join(path, 'src', 'App.vue'), 'w') as f:
+        f.write('<template>\n  <div style="font-family: system-ui, sans-serif; text-align: center; padding: 4rem 1rem;">\n    <h1>🚀 ' + name + '</h1>\n    <p>Built with SaaSClaw</p>\n  </div>\n</template>\n')
+
+
+def _seed_svelte(path, name):
+    os.makedirs(os.path.join(path, 'src'), exist_ok=True)
+    with open(os.path.join(path, 'package.json'), 'w') as f:
+        import json
+        json.dump({
+            'name': name.lower().replace(' ', '-'),
+            'private': True,
+            'version': '0.0.0',
+            'type': 'module',
+            'scripts': {
+                'dev': 'vite',
+                'build': 'vite build',
+                'preview': 'vite preview',
+            },
+            'devDependencies': {
+                '@sveltejs/vite-plugin-svelte': '^3.1.0',
+                'svelte': '^4.2.0',
+                'vite': '^5.4.0',
+            },
+        }, f, indent=2)
+    with open(os.path.join(path, 'vite.config.js'), 'w') as f:
+        f.write('''import { defineConfig } from 'vite'
+import { svelte } from '@sveltejs/vite-plugin-svelte'
+
+export default defineConfig({
+  plugins: [svelte()],
+})
+''')
+    with open(os.path.join(path, 'svelte.config.js'), 'w') as f:
+        f.write('''import { vitePreprocess } from '@sveltejs/vite-plugin-svelte'
+
+export default {
+  preprocess: vitePreprocess(),
+}
+''')
+    with open(os.path.join(path, 'index.html'), 'w') as f:
+        f.write('''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>App</title>
+</head>
+<body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>
+''')
+    with open(os.path.join(path, 'src', 'main.js'), 'w') as f:
+        f.write('''import App from './App.svelte'
+
+const app = new App({
+  target: document.getElementById('app'),
+})
+
+export default app
+''')
+    with open(os.path.join(path, 'src', 'App.svelte'), 'w') as f:
+        f.write('<main style="font-family: system-ui, sans-serif; text-align: center; padding: 4rem 1rem;">\n  <h1>🚀 ' + name + '</h1>\n  <p>Built with SaaSClaw</p>\n</main>\n')
+
+
+def _seed_python(path, fw):
+    _seed_readme(path, fw, fw)
 
 
 @api_view(['GET', 'POST'])
