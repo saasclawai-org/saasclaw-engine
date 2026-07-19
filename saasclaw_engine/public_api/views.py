@@ -282,6 +282,7 @@ def projects_list_create(request):
         'hugo': 'static',
         'dotnet': 'dotnet', 'react-dotnet': 'dotnet', 'react-dotnet-crm': 'dotnet',
         'spring-boot': 'java',
+        'android': 'android',
     }
     _runtime_kind = _RUNTIME_MAP.get(_framework, 'static')
 

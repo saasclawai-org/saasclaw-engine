@@ -235,6 +235,8 @@ def _scan_codebase_context(workspace_path: str) -> str:
             project_type = "Node.js"
     if any(fname.endswith('.csproj') for fname in top_files):
         project_type = ".NET"
+    elif any(fname in ('build.gradle.kts', 'build.gradle', 'settings.gradle.kts', 'settings.gradle') for fname in top_files):
+        project_type = "Android"
     elif "manage.py" in top_files:
         project_type = "Django"
     elif "app.py" in top_files:
@@ -270,6 +272,10 @@ def _scan_codebase_context(workspace_path: str) -> str:
         test_cmd = "go test ./..."
     elif project_type == "Hugo":
         build_cmd = "hugo"
+    elif project_type == "Android":
+        build_cmd = "./gradlew assembleDebug"
+        test_cmd = "./gradlew test"
+        hints.append("Build: ./gradlew assembleDebug")
 
     if build_cmd:
         hints.append(f"Build command: {build_cmd}")
@@ -278,7 +284,7 @@ def _scan_codebase_context(workspace_path: str) -> str:
 
     # --- Phase 3: Source structure ---
     source_dirs = []
-    for d in ["src", "lib", "app", "components", "pages", "routes", "services",
+    for d in ["src", "lib", "app", "components", "pages", "routes", "services", "app/src/main/java", "app/src/main/kotlin", "app/src/test",
               "models", "handlers", "api", "utils", "helpers", "templates",
               "static", "public", "config", "types", "interfaces"]:
         full = os.path.join(workspace_path, d)

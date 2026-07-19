@@ -43,6 +43,7 @@ class Environment(models.Model):
         DJANGO = 'django', 'Django'
         DOTNET = 'dotnet', '.NET'
         JAVA = 'java', 'Java / Spring Boot'
+        ANDROID = 'android', 'Android (Kotlin)'
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='environments')
     name = models.CharField(max_length=20, choices=Name.choices)
