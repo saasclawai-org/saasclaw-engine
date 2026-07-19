@@ -20,7 +20,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
 from .models import PenpotConnection
-from .penpot import PenpotClient, extract_file_summary, format_penpot_tokens_for_prompt
+from .penpot import PenpotClient, extract_file_summary, format_penpot_tokens_for_prompt, format_tokens_for_compose
 
 logger = logging.getLogger(__name__)
 User = get_user_model()

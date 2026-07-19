@@ -173,8 +173,21 @@ class PenpotClient:
 # --- Design token extraction ---
 
 def _hex_to_name(hex_val: str) -> str:
-    """Generate a short name from a hex color."""
-    return hex_val.lstrip('#').lower()[:6]
+    """Generate a semantic name from a hex color."""
+    h = hex_val.lstrip('#').lower()[:6]
+    # Common color name lookup
+    color_names = {
+        'ffffff': 'white', '000000': 'black', 'f5f6f8': 'surface',
+        'ebeff2': 'surfaceVariant', 'c2cfe0': 'outline',
+        '192a3e': 'onSurfaceDark', '334d6e': 'onSurface',
+        '109cf1': 'primary', '34aff9': 'primaryLight',
+        '2ed47a': 'success', 'f7685b': 'error', 'ff3c5f': 'errorBright',
+        '885af8': 'secondary', 'ffb946': 'warning',
+        'a0aec1': 'onSurfaceMuted', '90a0b7': 'onSurfaceFaint',
+        'aeaeae': 'gray', 'c4c4c4': 'grayLight',
+        'd5d5d5': 'borderLight', 'd3d8dd': 'borderMuted',
+    }
+    return color_names.get(h, f'color{h[:4]}')
 
 
 def extract_penpot_design_tokens(file_data: dict) -> dict:
@@ -415,6 +428,7 @@ def extract_file_summary(file_data: dict) -> dict:
 
     tokens = extract_penpot_design_tokens(file_data)
     prompt_text = format_penpot_tokens_for_prompt(tokens, file_name)
+    compose_text = format_tokens_for_compose(tokens, file_name)
 
     return {
         "file_name": file_name,
@@ -422,4 +436,192 @@ def extract_file_summary(file_data: dict) -> dict:
         "pages": pages_summary,
         "tokens": tokens,
         "prompt_text": prompt_text,
+        "compose_text": compose_text,
     }
+
+
+def _hex_to_compose_color(hex_val: str) -> str:
+    """Convert #RRGGBB or #RRGGBBAA to Compose Color(0xAARRGGBB)."""
+    h = hex_val.lstrip('#')
+    if len(h) == 6:
+        return f"Color(0xFF{h})"
+    elif len(h) == 8:
+        return f"Color(0x{h})"
+    return f"Color(0xFF{h[:6]})"
+
+
+def _name_to_pascal(name: str) -> str:
+    """Convert 'primary-blue' / 'accent_1' / 'border-error' to 'PrimaryBlue' / 'Error'."""
+    # Strip common prefixes
+    name = re.sub(r'^(border[-_\s]?|text[-_\s]?|bg[-_\s]?)', '', name, flags=re.IGNORECASE)
+    parts = re.split(r'[-_\s]+', name.strip())
+    if not parts or not parts[0]:
+        parts = ['custom']
+    return ''.join(p.capitalize() for p in parts if p)
+
+
+def _weight_to_compose(weight: int | float) -> str:
+    """Map numeric font weight to Compose FontWeight constant."""
+    w = int(weight)
+    mapping = {
+        100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Normal',
+        500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black',
+    }
+    # Find closest match
+    closest = min(mapping.keys(), key=lambda k: abs(k - w))
+    return f"FontWeight.{mapping[closest]}"
+
+
+def format_tokens_for_compose(tokens: dict, file_name: str = "") -> str:
+    """Format design tokens as ready-to-use Kotlin Compose code.
+
+    Outputs:
+    - Color.kt: all colors as Compose Color constants
+    - Type.kt: Typography definitions
+    - Shapes.kt: RoundedCornerShape values
+    - Spacing.kt: spacing constants
+    - Shadows.kt: shadow definitions
+
+    This gives the wizard actual Kotlin code it can drop into the project
+    instead of generic token descriptions.
+    """
+    lines = [
+        f"// === Penpot Design Tokens → Kotlin Compose ===",
+        f"// Source: {file_name}" if file_name else "// Source: Penpot",
+        f"// Drop these into ui/theme/",
+        "",
+    ]
+
+    # --- Color.kt ---
+    if tokens.get("colors"):
+        lines.append("// ============ Color.kt ============")
+        lines.append("package com.saasclaw.app.ui.theme")
+        lines.append("")
+        lines.append("import androidx.compose.ui.graphics.Color")
+        lines.append("")
+        seen = set()
+        for name, hex_val in list(tokens["colors"].items())[:20]:
+            pascal = _name_to_pascal(name)
+            if pascal in seen:
+                continue
+            seen.add(pascal)
+            compose_color = _hex_to_compose_color(hex_val)
+            lines.append(f"val {pascal} = {compose_color}")
+        lines.append("")
+
+    # --- Type.kt ---
+    if tokens.get("typography"):
+        lines.append("// ============ Type.kt ============")
+        lines.append("package com.saasclaw.app.ui.theme")
+        lines.append("")
+        lines.append("import androidx.compose.material3.Typography")
+        lines.append("import androidx.compose.ui.text.TextStyle")
+        lines.append("import androidx.compose.ui.text.font.FontWeight")
+        lines.append("import androidx.compose.ui.unit.sp")
+        lines.append("")
+        lines.append("val AppTypography = Typography(")
+
+        style_map = {
+            'h1': 'displayLarge', 'h2': 'displayMedium', 'h3': 'displaySmall',
+            'heading': 'headlineMedium', 'title': 'titleLarge',
+            'subtitle': 'titleMedium', 'body': 'bodyLarge',
+            'caption': 'bodySmall', 'label': 'labelLarge', 'button': 'labelLarge',
+        }
+
+        used_styles = set()
+        for t in tokens["typography"][:10]:
+            selector = t.get('selector', 'body').lower()
+            # Match to Material 3 style slot
+            style_slot = None
+            for key, slot in style_map.items():
+                if key in selector:
+                    style_slot = slot
+                    break
+            if not style_slot or style_slot in used_styles:
+                continue
+            used_styles.add(style_slot)
+
+            size = t.get('font_size', 14)
+            weight = _weight_to_compose(t.get('font_weight', 400))
+            family = t.get('font_family', 'sans-serif')
+            # Map common font names
+            if 'inter' in family.lower():
+                family_kt = "FontFamily.SansSerif"
+            elif 'serif' in family.lower():
+                family_kt = "FontFamily.Serif"
+            elif 'mono' in family.lower():
+                family_kt = "FontFamily.Monospace"
+            else:
+                family_kt = "FontFamily.Default"
+
+            lines.append(f"    {style_slot} = TextStyle(")
+            lines.append(f"        fontSize = {size}.sp,")
+            lines.append(f"        fontWeight = {weight},")
+            lines.append(f"        fontFamily = {family_kt}")
+            lines.append(f"    ),")
+
+        lines.append(")")
+        lines.append("")
+
+    # --- Shapes.kt ---
+    if tokens.get("radii"):
+        lines.append("// ============ Shapes.kt ============")
+        lines.append("package com.saasclaw.app.ui.theme")
+        lines.append("")
+        lines.append("import androidx.compose.foundation.shape.RoundedCornerShape")
+        lines.append("import androidx.compose.material3.Shapes")
+        lines.append("import androidx.compose.ui.unit.dp")
+        lines.append("")
+
+        radii = sorted(set(tokens["radii"]))[:5]
+        lines.append("val AppShapes = Shapes(")
+        size_labels = ['extraSmall', 'small', 'medium', 'large', 'extraLarge']
+        for i, r in enumerate(radii):
+            label = size_labels[i] if i < len(size_labels) else f"extraLarge{(i - 4) * 2}"
+            lines.append(f"    {label} = RoundedCornerShape({r}.dp),")
+        lines.append(")")
+        lines.append("")
+
+    # --- Spacing.kt ---
+    if tokens.get("spacing"):
+        lines.append("// ============ Spacing.kt ============")
+        lines.append("package com.saasclaw.app.ui.theme")
+        lines.append("")
+        lines.append("import androidx.compose.ui.unit.dp")
+        lines.append("")
+        lines.append("object Spacing {")
+        spacing_vals = sorted(set(tokens["spacing"]))[:8]
+        size_names = ['xs', 'sm', 'md', 'lg', 'xl', 'xxl', 'xxxl', 'huge']
+        for i, s in enumerate(spacing_vals):
+            name = size_names[i] if i < len(size_names) else f"custom{i}"
+            lines.append(f"    val {name} = {s}.dp")
+        lines.append("}")
+        lines.append("")
+
+    # --- Shadows.kt ---
+    if tokens.get("shadows"):
+        lines.append("// ============ Shadows.kt ============")
+        lines.append("package com.saasclaw.app.ui.theme")
+        lines.append("")
+        lines.append("import androidx.compose.ui.draw.shadow")
+        lines.append("import androidx.compose.ui.unit.dp")
+        lines.append("import androidx.compose.ui.graphics.Color")
+        lines.append("")
+        lines.append("object Shadows {")
+        for i, s in enumerate(tokens["shadows"][:5]):
+            color = _hex_to_compose_color(s.get('color', '#000000'))
+            ox = s.get('offset_x', 0)
+            oy = s.get('offset_y', 0)
+            blur = s.get('radius', 0)
+            lines.append(f"    val elevation{i} = Modifier.shadow(")
+            lines.append(f"        elevation = {max(blur, 1)}.dp,")
+            lines.append(f"        clip = False")
+            lines.append(f"    )")
+        lines.append("}")
+        lines.append("")
+
+    # --- Summary comment ---
+    lines.append(f"// Summary: {tokens.get('page_count', 0)} pages, {tokens.get('frame_count', 0)} frames, {tokens.get('component_count', 0)} components")
+    lines.append(f"// Colors: {len(tokens.get('colors', {}))}, Typography: {len(tokens.get('typography', []))}, Radii: {len(tokens.get('radii', []))}, Spacing: {len(tokens.get('spacing', []))}")
+
+    return "\n".join(lines)
