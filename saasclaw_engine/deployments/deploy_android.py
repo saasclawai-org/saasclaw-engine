@@ -155,6 +155,23 @@ def _deploy_android_environment(
             repo_path, log_file, timeout=60,
         )
 
+    # Make applicationId unique per project to avoid signature conflicts
+    # when multiple SaaSClaw Android apps are installed on the same device
+    build_gradle = repo_path / 'app' / 'build.gradle.kts'
+    if build_gradle.exists():
+        with open(build_gradle, 'r') as bf:
+            bg = bf.read()
+        unique_id = f'com.saasclaw.{project.slug.replace("-", "_")}'
+        if f'applicationId = "com.saasclaw.app"' in bg:
+            bg = bg.replace(
+                'applicationId = "com.saasclaw.app"',
+                f'applicationId = "{unique_id}"'
+            )
+            with open(build_gradle, 'w') as bf:
+                bf.write(bg)
+            with log_file.open('a', encoding='utf-8') as handle:
+                handle.write(f'Set applicationId to {unique_id}\n')
+
     # Build debug APK (works without signing config)
     with log_file.open('a', encoding='utf-8') as handle:
         handle.write('Building debug APK...\n')
