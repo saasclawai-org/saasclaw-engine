@@ -144,6 +144,15 @@ def _deploy_android_environment(
     gradlew = repo_path / 'gradlew'
     if gradlew.exists():
         _run_command(f'chmod +x {gradlew}', repo_path, log_file)
+    else:
+        # Generate gradle wrapper if missing
+        _run_command(
+            f'curl -sSL -o {repo_path}/gradlew https://raw.githubusercontent.com/gradle/gradle/v8.11.1/gradlew && '
+            f'chmod +x {repo_path}/gradlew && '
+            f'mkdir -p {repo_path}/gradle/wrapper && '
+            f'curl -sSL -o {repo_path}/gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.11.1/gradle/wrapper/gradle-wrapper.jar',
+            repo_path, log_file, timeout=60,
+        )
 
     # Build debug APK (works without signing config)
     with log_file.open('a', encoding='utf-8') as handle:
