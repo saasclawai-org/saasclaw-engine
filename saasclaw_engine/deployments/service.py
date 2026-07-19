@@ -62,8 +62,14 @@ def _deploy_environment(project: Project, environment_name: str, triggered_by=No
     if not environment:
         raise RuntimeError(f'No {environment_name} environment for project {project.slug}')
 
-    repo_path = Path(project.workspace_root) / 'repo'
-    log_dir = Path(project.workspace_root) / 'logs'
+    # Auto-populate workspace_root if missing
+    workspace_root = project.workspace_root or f'/srv/saasclaw/projects/{project.slug}'
+    if not project.workspace_root:
+        project.workspace_root = workspace_root
+        project.save(update_fields=['workspace_root'])
+
+    repo_path = Path(workspace_root) / 'repo'
+    log_dir = Path(workspace_root) / 'logs'
     log_dir.mkdir(parents=True, exist_ok=True)
 
     deployment = Deployment.objects.create(
