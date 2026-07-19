@@ -221,6 +221,162 @@ def exchange_session_token(request):
     })
 
 
+@api_view(['POST'])
+@permission_classes([DRFAllowAny])
+def google_auth(request):
+    """Authenticate with a Google ID token.
+
+    Accepts { id_token: "..." } from Google Sign-In SDK.
+    Verifies the token, finds/creates the user, returns JWT.
+    """
+    import urllib.request
+    import json as _json
+
+    id_token = request.data.get('id_token')
+    if not id_token:
+        return Response({'detail': 'id_token is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Verify the ID token with Google
+    try:
+        req = urllib.request.Request(
+            f'https://oauth2.googleapis.com/tokeninfo?id_token={id_token}'
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            token_data = _json.loads(resp.read())
+    except Exception:
+        return Response({'detail': 'Invalid Google token.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    email = token_data.get('email')
+    if not email:
+        return Response({'detail': 'Google token has no email.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Find or create user
+    user, created = User.objects.get_or_create(
+        email=email,
+        defaults={'username': email, 'is_active': True}
+    )
+    if created:
+        logger.info('Created user via Google auth: %s', email)
+
+    refresh = RefreshToken.for_user(user)
+    return Response({
+        'access': str(refresh.access_token),
+        'refresh': str(refresh),
+        'email': user.email,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([DRFAllowAny])
+def github_auth(request):
+    """Authenticate with a GitHub OAuth code.
+
+    Accepts { code: "..." } from GitHub OAuth web flow.
+    Exchanges code for access token, gets user info, returns JWT.
+    """
+    import urllib.request
+    import json as _json
+
+    code = request.data.get('code')
+    if not code:
+        return Response({'detail': 'code is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Get GitHub client id/secret from allauth SocialApp
+    from allauth.socialaccount.models import SocialApp
+    try:
+        gh_app = SocialApp.objects.get(provider='github')
+        client_id = gh_app.client_id
+        client_secret = gh_app.secret
+    except SocialApp.DoesNotExist:
+        return Response({'detail': 'GitHub OAuth not configured.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # Exchange code for access token
+    token_payload = _json.dumps({
+        'client_id': client_id,
+        'client_secret': client_secret,
+        'code': code,
+    }).encode()
+
+    token_req = urllib.request.Request(
+        'https://github.com/login/oauth/access_token',
+        data=token_payload,
+        headers={
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+        },
+    )
+    try:
+        with urllib.request.urlopen(token_req, timeout=10) as resp:
+            token_resp = _json.loads(resp.read())
+    except Exception:
+        return Response({'detail': 'Failed to exchange GitHub code.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    gh_access_token = token_resp.get('access_token')
+    if not gh_access_token:
+        return Response({'detail': 'GitHub did not return access token.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Get user info from GitHub
+    user_req = urllib.request.Request(
+        'https://api.github.com/user/emails',
+        headers={'Authorization': f'token {gh_access_token}', 'Accept': 'application/vnd.github+json'},
+    )
+    try:
+        with urllib.request.urlopen(user_req, timeout=10) as resp:
+            emails = _json.loads(resp.read())
+    except Exception:
+        return Response({'detail': 'Failed to get GitHub user info.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    email = None
+    for e in emails:
+        if e.get('primary'):
+            email = e.get('email')
+            break
+    if not email and emails:
+        email = emails[0].get('email')
+
+    if not email:
+        return Response({'detail': 'GitHub account has no verified email.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Find or create user
+    user, created = User.objects.get_or_create(
+        email=email,
+        defaults={'username': email, 'is_active': True}
+    )
+    if created:
+        logger.info('Created user via GitHub auth: %s', email)
+
+    refresh = RefreshToken.for_user(user)
+    return Response({
+        'access': str(refresh.access_token),
+        'refresh': str(refresh),
+        'email': user.email,
+    })
+
+
+from django.http import HttpResponse
+from django.views.decorators.csrf import csrf_exempt
+
+@api_view(['GET'])
+@permission_classes([DRFAllowAny])
+@csrf_exempt
+def github_redirect(request):
+    """Simple HTML page for mobile OAuth redirect.
+    
+    GitHub redirects here with ?code=xxx. This page just shows
+    the code so the WebView can intercept it. Does NOT consume the code.
+    """
+    code = request.GET.get('code', '')
+    error = request.GET.get('error', '')
+    return HttpResponse(f'''<!DOCTYPE html>
+<html><head><title>Authenticating...</title></head>
+<body style="font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f0f1a;color:#fff;">
+<div style="text-align:center;">
+<h2>🛠️ SaaSClaw</h2>
+<p>{'Connecting...' if code else 'Auth failed'}</p>
+</div>
+</body></html>''')
+
+
 # ---- Projects ----
 
 @api_view(['GET', 'POST'])
@@ -471,6 +627,8 @@ def session_send(request, slug, session_id):
     if not message:
         return Response({'detail': 'Message is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    model_override = request.data.get('model', None)
+
     workspace = _project_workspace(project)
     if not workspace:
         return Response({'detail': 'No workspace found.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -508,6 +666,7 @@ def session_send(request, slug, session_id):
                 user=user,
                 project_id=project.id,
                 session_id=str(session.id),
+                model=model_override,
             )
 
             # Stream each message as SSE events
@@ -813,24 +972,63 @@ server {{
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def deploy_status(request, slug):
-    """Get current deploy status."""
+    """Get current deploy status with real deployment data."""
+    from saasclaw_engine.deployments.models import Deployment
+
     user = _get_user(request)
     project, err = _get_project(slug, user)
     if err:
         return err
 
-    workspace = project.workspace_root or f'/srv/saasclaw/projects/{slug}/repo'
-    web_root = f'/srv/saasclaw/projects/{slug}/web'
+    # Get the most recent deployment
+    last_deploy = Deployment.objects.filter(
+        project=project, environment__name='preview'
+    ).order_by('-id').first()
 
-    # Check if web root exists
-    deployed = os.path.isdir(web_root) and os.listdir(web_root)
+    # Check if APK exists (Android) or web root exists (web apps)
+    apk_path = f'/srv/saasclaw/projects/{slug}/runtime/preview/app-debug.apk'
+    web_root = f'/srv/saasclaw/projects/{slug}/web'
+    is_android = project.framework == 'android'
+    is_deployed = False
+    if is_android:
+        is_deployed = os.path.isfile(apk_path)
+    else:
+        is_deployed = os.path.isdir(web_root) and bool(os.listdir(web_root))
+
+    # Determine status
+    if last_deploy:
+        status = last_deploy.status
+        error = last_deploy.error_message
+        commit = last_deploy.git_commit_sha[:7] if last_deploy.git_commit_sha else None
+        deployed_at = last_deploy.finished_at.isoformat() if last_deploy.finished_at else None
+    else:
+        status = 'deployed' if is_deployed else 'not_deployed'
+        error = None
+        commit = None
+        deployed_at = None
+
+    # Build URLs
+    preview_url = f'https://{slug}.preview.saasclaw.ai' if project.preview_domain else None
+    production_url = f'https://{slug}.saasclaw.ai' if project.production_domain else None
+    if is_android:
+        download_url = f'https://{slug}.preview.saasclaw.ai/app-debug.apk'
+    else:
+        download_url = preview_url
 
     return Response({
         'id': project.id,
-        'status': 'deployed' if deployed else 'not_deployed',
-        'url': f'https://{project.preview_domain}' if project.preview_domain else '',
+        'status': status,
+        'deploy_status': status,
+        'error': error,
+        'deploy_error': error,
+        'commit': commit,
+        'deployed_at': deployed_at,
+        'preview_url': preview_url,
+        'production_url': production_url,
+        'download_url': download_url,
+        'framework': project.framework,
+        'is_android': is_android,
         'environment': 'preview',
-        'created_at': project.updated_at.isoformat() if hasattr(project, 'updated_at') else '',
     })
 
 

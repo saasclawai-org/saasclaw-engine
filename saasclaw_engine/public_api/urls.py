@@ -11,6 +11,9 @@ urlpatterns = [
     path('auth/token/', csrf_exempt(views.login_view), name='public-api-token'),  # alias for SimpleJWT-style clients
     path('auth/register/', csrf_exempt(views.register_view), name='public-api-register'),
     path('auth/exchange-session-token/', csrf_exempt(views.exchange_session_token), name='public-api-exchange-session-token'),
+    path('auth/google/', csrf_exempt(views.google_auth), name='public-api-google-auth'),
+    path('auth/github/', csrf_exempt(views.github_auth), name='public-api-github-auth'),
+    path('auth/github/redirect/', csrf_exempt(views.github_redirect), name='public-api-github-redirect'),
 
     # Projects
     path('projects/', csrf_exempt(views.projects_list_create), name='public-api-projects'),
