@@ -891,7 +891,11 @@ def session_detail(request, slug, session_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def session_send(request, slug, session_id):
-    """Send a message to an agent session and stream responses via SSE."""
+    """Send a message to an agent session and stream responses via SSE.
+
+    Uses the same OpenClaw gateway streaming as the website wizard — real-time
+    text deltas, tool calls, and tool results as they happen.
+    """
     user = _get_user(request)
     project, err = _get_project(slug, user)
     if err:
@@ -913,16 +917,12 @@ def session_send(request, slug, session_id):
     if not workspace:
         return Response({'detail': 'No workspace found.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # Prevent duplicate concurrent requests
+    if session.status == 'running':
+        return Response({'detail': 'Session is already running.'}, status=status.HTTP_409_CONFLICT)
+
     # Mark session as running
     AgentSession.objects.filter(id=session.id).update(status='running')
-
-    # Build conversation from existing messages
-    existing = session.messages.order_by('created_at')
-    conversation = [
-        {'role': m.role, 'content': m.content, 'tool_call': m.tool_call or {}}
-        for m in existing
-        if m.role in ('user', 'assistant')
-    ]
 
     # Save user message
     AgentMessage.objects.create(
@@ -932,93 +932,147 @@ def session_send(request, slug, session_id):
         tool_call={},
     )
 
-    workspace_path = workspace.local_path
+    ws_path = workspace.local_path
+    session_id_str = str(session.id)
+
+    # Build project context (same as website wizard)
+    from studio.views.context_builder import _build_project_context
+    from studio.views.openclaw_backend import stream_openclaw_agent
+    from studio.views.wizard_utils import save_token_usage, mark_session_idle
+
+    project_context = _build_project_context(project)
+    profile_prompt = session.profile.system_prompt if session.profile else ""
+    project_todos = list(project.todos.filter(done=False).order_by('order').values('text', 'done'))
+
+    # Resolve model (same logic as website wizard)
+    actual_model = model_override or 'glm-5.1'
+    gateway_model = actual_model
+    if not gateway_model.startswith(('zai/', 'openai/', 'anthropic/')):
+        gateway_model = f'zai/{gateway_model}'
 
     def event_stream():
+        """Generator yielding real-time SSE events via OpenClaw gateway."""
+        from django.db import connection
+        full_assistant_text = ""
+        _assistant_msg_id = None
+        total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
         try:
-            from saasclaw_engine.agent.runner import run_agent
-
-            new_messages = run_agent(
-                workspace_path=workspace_path,
+            for event in stream_openclaw_agent(
+                session_id=session_id_str,
+                workspace_path=ws_path,
                 project_name=project.name,
-                conversation=conversation,
+                project=project,
                 user_message=message,
-                user=user,
-                project_id=project.id,
-                session_id=str(session.id),
-                model=model_override,
+                provider='zai',
+                model=actual_model,
+                gateway_model=gateway_model,
+                profile_prompt=profile_prompt,
+                project_directives=project.directives,
+                project_context=project_context,
+                project_todos=project_todos,
+            ):
+                etype = event.get('type')
+
+                if etype == 'model':
+                    yield f'data: {json.dumps({"type": "model", "model": event.get("model", actual_model)})}\n\n'
+
+                elif etype == 'text':
+                    delta = event.get('content', '')
+                    full_assistant_text += delta
+                    # Save incrementally so messages persist even if stream crashes
+                    if full_assistant_text.strip():
+                        if _assistant_msg_id is None:
+                            _msg = AgentMessage.objects.create(
+                                session_id=session_id_str, role='assistant',
+                                content=full_assistant_text, tool_call={},
+                            )
+                            _assistant_msg_id = _msg.id
+                        else:
+                            AgentMessage.objects.filter(id=_assistant_msg_id).update(
+                                content=full_assistant_text
+                            )
+                    yield f'data: {json.dumps({"type": "content", "content": delta})}\n\n'
+
+                elif etype == 'tool_start':
+                    tc_name = event.get('name', '?')
+                    tc_args = event.get('args', '')
+                    yield f'data: {json.dumps({"type": "tool_call", "name": tc_name, "args": tc_args})}\n\n'
+
+                elif etype == 'tool_result':
+                    tc_name = event.get('name', '?')
+                    output = event.get('result', '')
+                    if output:
+                        AgentMessage.objects.create(
+                            session_id=session_id_str,
+                            role='tool',
+                            content=str(output)[:2000],
+                            tool_call={'name': tc_name, 'result': str(output)[:200]},
+                        )
+                        display = str(output)
+                        if len(display) > 2000:
+                            display = display[:2000] + '...'
+                        yield f'data: {json.dumps({"type": "tool_result", "name": tc_name, "content": display})}\n\n'
+
+                elif etype == '_usage':
+                    usage = event.get('usage', {})
+                    if usage:
+                        total_usage['prompt_tokens'] += usage.get('prompt_tokens', 0)
+                        total_usage['completion_tokens'] += usage.get('completion_tokens', 0)
+                        total_usage['total_tokens'] += usage.get('total_tokens', 0)
+
+                elif etype == 'done':
+                    if full_assistant_text.strip():
+                        if _assistant_msg_id:
+                            AgentMessage.objects.filter(id=_assistant_msg_id).update(
+                                content=full_assistant_text
+                            )
+                        else:
+                            _msg = AgentMessage.objects.create(
+                                session_id=session_id_str, role='assistant',
+                                content=full_assistant_text, tool_call={},
+                            )
+                            _assistant_msg_id = _msg.id
+                    yield f'data: {json.dumps({"type": "done", "content": full_assistant_text, "model": actual_model})}\n\n'
+
+                elif etype == 'error':
+                    yield f'data: {json.dumps({"type": "error", "content": event.get("content", "Unknown error")})}\n\n'
+
+            # Auto-commit workspace changes (same as website)
+            try:
+                import subprocess
+                subprocess.run(['sudo', 'chown', '-R', '999:983', ws_path],
+                               capture_output=True, timeout=10)
+                from saasclaw_engine.agent.tools import git_status, git_commit, _git
+                status = git_status(ws_path).strip()
+                if status:
+                    branch = workspace.work_branch or 'main'
+                    git_commit(ws_path, 'API: auto-commit pending changes')
+                    _git(ws_path, 'push', 'origin', branch)
+                    logger.info('Auto-committed changes for %s', slug)
+            except Exception as ac_err:
+                logger.warning('Auto-commit failed (non-fatal): %s', ac_err)
+
+        except Exception as exc:
+            logger.exception('Stream error for project=%s session=%s', slug, session_id)
+            AgentMessage.objects.create(
+                session_id=session_id_str,
+                role='assistant',
+                content=f'⚠️ {exc}',
+                tool_call={},
             )
+            yield f'data: {json.dumps({"type": "error", "content": str(exc)})}\n\n'
+        finally:
+            save_token_usage(project, session_id_str, 'zai', actual_model, total_usage)
+            mark_session_idle(session_id_str)
+            connection.close()
 
-            # Stream each message as SSE events
-            for msg in new_messages:
-                role = msg.get('role', 'assistant')
-                content = msg.get('content', '')
-                tool_call = msg.get('tool_call', msg.get('tool_calls'))
-
-                if role == 'user':
-                    # Already saved above
-                    continue
-
-                if role == 'assistant' and content:
-                    # Save and stream assistant text
-                    AgentMessage.objects.create(
-                        session=session,
-                        role='assistant',
-                        content=content,
-                        tool_call=tool_call if isinstance(tool_call, dict) else {},
-                    )
-                    yield f'data: {json.dumps({"type": "content", "content": content})}\n\n'
-
-                elif role == 'assistant' and tool_call:
-                    # Tool call from assistant
-                    AgentMessage.objects.create(
-                        session=session,
-                        role='assistant',
-                        content=content or '',
-                        tool_call=tool_call if isinstance(tool_call, dict) else {},
-                    )
-                    if isinstance(tool_call, dict):
-                        tc_name = tool_call.get('function', {}).get('name', tool_call.get('name', ''))
-                    elif isinstance(tool_call, list):
-                        for tc in tool_call:
-                            tc_name = tc.get('function', {}).get('name', str(tc)) if isinstance(tc, dict) else str(tc)
-                            yield f'data: {json.dumps({"type": "tool_call", "name": tc_name})}\n\n'
-                        continue
-                    else:
-                        tc_name = str(tool_call)
-                    yield f'data: {json.dumps({"type": "tool_call", "name": tc_name})}\n\n'
-
-                elif role == 'tool':
-                    tool_name = msg.get('name', 'unknown')
-                    tool_content = msg.get('content', '')
-                    # Save tool result
-                    AgentMessage.objects.create(
-                        session=session,
-                        role='tool',
-                        content=str(tool_content)[:2000],
-                        tool_call={'name': tool_name, 'result': str(tool_content)[:200]},
-                    )
-                    # Truncate for SSE
-                    display = str(tool_content)
-                    if len(display) > 2000:
-                        display = display[:2000] + '...'
-                    yield f'data: {json.dumps({"type": "tool_result", "name": tool_name, "content": display})}\n\n'
-
-            # Mark session as idle
-            AgentSession.objects.filter(id=session.id).update(status='idle')
-            yield 'data: [DONE]\n\n'
-        except Exception as e:
-            logger.exception('SSE stream error for project=%s session=%s', slug, session_id)
-            AgentSession.objects.filter(id=session.id).update(status='idle')
-            yield f'data: {json.dumps({"type": "error", "content": str(e)})}\n\n'
+        yield 'data: [DONE]\n\n'
 
     response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
     response['Cache-Control'] = 'no-cache'
     response['X-Accel-Buffering'] = 'no'
     return response
-
-
-# ---- Environment Variables ----
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
