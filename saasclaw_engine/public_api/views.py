@@ -1162,6 +1162,7 @@ def session_reset(request, project_slug, session_id):
     project, err = _get_project(project_slug, request.user)
     if err:
         return err
+    from saasclaw_engine.studio_models.models import AgentSession
     try:
         session = AgentSession.objects.get(id=session_id, project=project)
     except AgentSession.DoesNotExist:
