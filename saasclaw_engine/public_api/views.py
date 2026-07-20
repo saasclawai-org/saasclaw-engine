@@ -1127,6 +1127,22 @@ def env_delete(request, slug, key):
         EnvironmentVariable.objects.filter(environment=env, key=key).delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def session_reset(request, project_slug, session_id):
+    """Reset a stuck session back to idle status."""
+    project, err = _get_project(project_slug, request.user)
+    if err:
+        return err
+    try:
+        session = AgentSession.objects.get(id=session_id, project=project)
+    except AgentSession.DoesNotExist:
+        return Response({"detail": "Session not found."}, status=404)
+    session.status = "idle"
+    session.save(update_fields=["status"])
+    return Response({"status": "idle", "session_id": str(session.id)})
+
+
 
 # ---- Deploy ----
 

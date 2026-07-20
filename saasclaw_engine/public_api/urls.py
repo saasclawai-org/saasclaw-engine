@@ -26,6 +26,7 @@ urlpatterns = [
     # Sessions (chat)
     path('projects/<str:slug>/sessions/', csrf_exempt(views.sessions_list_create), name='public-api-sessions'),
     path('projects/<str:slug>/sessions/<uuid:session_id>/', csrf_exempt(views.session_detail), name='public-api-session-detail'),
+    path('projects/<slug:project_slug>/sessions/<uuid:session_id>/reset/', csrf_exempt(views.session_reset), name='public-api-session-reset'),
     path('projects/<str:slug>/sessions/<uuid:session_id>/send/', csrf_exempt(views.session_send), name='public-api-session-send'),
 
     # Env vars
