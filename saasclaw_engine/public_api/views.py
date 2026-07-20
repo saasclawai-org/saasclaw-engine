@@ -199,6 +199,33 @@ def login_view(request):
 
 
 @api_view(['POST'])
+@permission_classes([DRFAllowAny])
+@authentication_classes([])
+def token_refresh(request):
+    """Refresh an expired JWT access token using the refresh token."""
+    refresh_token = request.data.get('refresh', '')
+    if not refresh_token:
+        return Response(
+            {'detail': 'Refresh token is required.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        from rest_framework_simplejwt.tokens import RefreshToken
+        token = RefreshToken(refresh_token)
+        user = User.objects.get(id=token['user_id'])
+        new_refresh = RefreshToken.for_user(user)
+        return Response({
+            'access': str(new_refresh.access_token),
+            'refresh': str(new_refresh),
+        })
+    except Exception:
+        return Response(
+            {'detail': 'Invalid or expired refresh token.'},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+
+@api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def exchange_session_token(request):
     """Exchange a session (cookie) auth for JWT tokens.

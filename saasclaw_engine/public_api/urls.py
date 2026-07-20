@@ -13,6 +13,7 @@ urlpatterns = [
     path('auth/exchange-session-token/', csrf_exempt(views.exchange_session_token), name='public-api-exchange-session-token'),
     path('auth/google/', csrf_exempt(views.google_auth), name='public-api-google-auth'),
     path('auth/github/', csrf_exempt(views.github_auth), name='public-api-github-auth'),
+    path('auth/refresh/', csrf_exempt(views.token_refresh), name='public-api-token-refresh'),
     path('auth/github/redirect/', csrf_exempt(views.github_redirect), name='public-api-github-redirect'),
 
     # Projects
