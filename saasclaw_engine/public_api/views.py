@@ -175,6 +175,7 @@ def login_view(request):
         })
     email = request.data.get('email', '') or request.data.get('username', '')
     password = request.data.get('password', '')
+
     try:
         user = User.objects.get(email=email)
     except User.DoesNotExist:
@@ -1184,6 +1185,38 @@ def deploy_trigger(request, slug):
 
     workspace = project.workspace_root or f'/srv/saasclaw/projects/{slug}/repo'
     environment = request.data.get('environment', 'preview')
+    # Check if this project uses the proper deploy pipeline (Android, Java, .NET, etc.)
+    from saasclaw_engine.deployments.service import deploy_preview, deploy_production
+    from saasclaw_engine.deployments.models import Environment
+    env_obj = project.environments.filter(name=environment).first()
+    if env_obj and env_obj.runtime_kind in (
+        Environment.RuntimeKind.ANDROID,
+        Environment.RuntimeKind.JAVA,
+        Environment.RuntimeKind.DOTNET,
+        Environment.RuntimeKind.NODE_SSR,
+    ):
+        # Use the proper deploy pipeline for managed runtimes
+        try:
+            dep = deploy_preview(project, triggered_by=user) if environment == 'preview' else deploy_production(project, triggered_by=user)
+            return Response({
+                'id': project.id,
+                'status': dep.status,
+                'deploy_status': dep.status,
+                'result': dep.deploy_log_object_key or '',
+                'url': f'https://{slug}.{"preview." if environment == "preview" else ""}saasclaw.ai',
+                'web_root': project.workspace_root or '',
+                'environment': environment,
+                'created_at': dep.created_at.isoformat() if dep.created_at else None,
+            })
+        except Exception as e:
+            return Response({
+                'id': project.id,
+                'status': 'failed',
+                'deploy_status': 'failed',
+                'error': str(e),
+                'deploy_error': str(e),
+                'environment': environment,
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     results = []
 
     import subprocess
