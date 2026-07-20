@@ -172,6 +172,20 @@ def _deploy_android_environment(
             with log_file.open('a', encoding='utf-8') as handle:
                 handle.write(f'Set applicationId to {unique_id}\n')
 
+    # Fix app display name: derive from project name instead of hardcoded "SaaSClaw"
+    strings_xml = repo_path / 'app' / 'src' / 'main' / 'res' / 'values' / 'strings.xml'
+    if strings_xml.exists():
+        with open(strings_xml, 'r') as sf:
+            sx = sf.read()
+        if '>SaaSClaw<' in sx:
+            # Convert slug to readable name (e.g. "workout-tracker" → "Workout Tracker")
+            display_name = project.name or project.slug.replace('-', ' ').title()
+            sx = sx.replace('>SaaSClaw<', f'>{display_name}<')
+            with open(strings_xml, 'w') as sf:
+                sf.write(sx)
+            with log_file.open('a', encoding='utf-8') as handle:
+                handle.write(f'Set app display name to "{display_name}"\n')
+
     # Build debug APK (works without signing config)
     with log_file.open('a', encoding='utf-8') as handle:
         handle.write('Building debug APK...\n')
