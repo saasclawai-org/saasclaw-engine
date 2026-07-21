@@ -19,6 +19,8 @@ urlpatterns = [
     # Projects
     path('projects/', csrf_exempt(views.projects_list_create), name='public-api-projects'),
     path('projects/<str:slug>/', csrf_exempt(views.project_detail), name='public-api-project-detail'),
+    path('projects/<str:slug>/link/', csrf_exempt(views.link_project), name='public-api-project-link'),
+    path('projects/<str:slug>/unlink/', csrf_exempt(views.unlink_project), name='public-api-project-unlink'),
 
     # Files
     path('projects/<str:slug>/files/', csrf_exempt(views.files_list), name='public-api-files-list'),

@@ -41,10 +41,12 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'slug', 'description', 'framework',
             'status', 'preview_domain', 'production_domain',
-            'onboarding_step', 'created_at', 'updated_at',
+            'onboarding_step', 'linked_project', 'linked_project_role',
+            'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'slug', 'preview_domain', 'production_domain',
-                            'onboarding_step', 'created_at', 'updated_at']
+                            'onboarding_step', 'linked_project', 'linked_project_role',
+                            'created_at', 'updated_at']
 
 
 class ProjectCreateSerializer(serializers.Serializer):

@@ -793,6 +793,77 @@ def project_detail(request, slug):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+# ---- Project Linking ----
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def link_project(request, slug):
+    """Link two projects as paired frontend/backend.
+    
+    POST body: {"linked_slug": "traction-engine", "role": "backend"}
+    Sets the link bidirectionally.
+    """
+    user = _get_user(request)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
+    
+    linked_slug = request.data.get('linked_slug')
+    role = request.data.get('role', '').strip()
+    
+    if not linked_slug:
+        return Response({'error': 'linked_slug is required'}, status=400)
+    if role not in ('frontend', 'backend'):
+        return Response({'error': 'role must be "frontend" or "backend"'}, status=400)
+    
+    try:
+        linked = Project.objects.get(slug=linked_slug, owner=user)
+    except Project.DoesNotExist:
+        return Response({'error': f'Project "{linked_slug}" not found'}, status=404)
+    
+    # Set bidirectional link
+    project.linked_project = linked
+    project.linked_project_role = role
+    project.save(update_fields=['linked_project', 'linked_project_role'])
+    
+    linked.linked_project = project
+    linked.linked_project_role = 'frontend' if role == 'backend' else 'backend'
+    linked.save(update_fields=['linked_project', 'linked_project_role'])
+    
+    # Clear context caches so wizard picks up the link
+    from studio.views.helpers import _invalidate_project_context
+    _invalidate_project_context(project)
+    _invalidate_project_context(linked)
+    
+    return Response({
+        'message': f'Linked {project.name} ({role}) ↔ {linked.name} ({linked.linked_project_role})',
+        'project': ProjectSerializer(project).data,
+        'linked': ProjectSerializer(linked).data,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def unlink_project(request, slug):
+    """Remove a project link."""
+    user = _get_user(request)
+    project, err = _get_project(slug, user)
+    if err:
+        return err
+    
+    linked = project.linked_project
+    if linked:
+        linked.linked_project = None
+        linked.linked_project_role = ''
+        linked.save(update_fields=['linked_project', 'linked_project_role'])
+    
+    project.linked_project = None
+    project.linked_project_role = ''
+    project.save(update_fields=['linked_project', 'linked_project_role'])
+    
+    return Response({'message': 'Project link removed'})
+
+
 # ---- Files ----
 
 @api_view(['GET'])
