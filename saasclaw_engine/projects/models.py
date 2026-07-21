@@ -73,6 +73,12 @@ class Project(models.Model):
     risk_tier = models.CharField(max_length=10, choices=RiskTier.choices, default=RiskTier.LOW)
     last_deployed_at = models.DateTimeField(null=True, blank=True)
     show_as_demo = models.BooleanField(default=False, help_text='Show on the public demos page')
+    linked_project = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='linked_from',
+        help_text='Paired project (e.g. frontend ↔ backend). Wizard includes this project\'s context when building.'
+    )
+    linked_project_role = models.CharField(max_length=20, blank=True, help_text='Role of THIS project in the link: "frontend" or "backend"')
     deleted_at = models.DateTimeField(null=True, blank=True, db_index=True, help_text='Soft delete timestamp — null means active')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
