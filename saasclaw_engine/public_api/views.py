@@ -1044,9 +1044,9 @@ def session_send(request, slug, session_id):
     project_todos = list(project.todos.filter(done=False).order_by('order').values('text', 'done'))
 
     # Resolve model (same logic as website wizard)
-    actual_model = model_override or 'glm-5.1'
+    actual_model = model_override or 'glm-5-turbo'
     gateway_model = actual_model
-    if not gateway_model.startswith(('zai/', 'openai/', 'anthropic/')):
+    if not gateway_model.startswith(('zai/', 'openai/', 'anthropic/', 'ollama-cloud/', 'moonshot/', 'groq/')):
         gateway_model = f'zai/{gateway_model}'
 
     def event_stream():

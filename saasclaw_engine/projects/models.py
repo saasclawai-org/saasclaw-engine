@@ -42,12 +42,23 @@ class Project(models.Model):
         READY = 'ready', 'Ready'
         DONE = 'done', 'Done'
 
+    class Category(models.TextChoices):
+        GAME = 'game', '🎮 Games'
+        BUSINESS = 'business', '💼 Business'
+        FINANCE = 'finance', '🧮 Finance'
+        DEV_TOOLS = 'dev_tools', '🛠️ Dev Tools'
+        TASKS = 'tasks', '📋 Task Apps'
+        CONTENT = 'content', '📄 Content'
+        UTILITY = 'utility', '🛠️ Utilities'
+        OTHER = 'other', '📦 Other'
+
     owner = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='owned_projects')
     name = models.CharField(max_length=200)
     slug = models.SlugField(unique=True)
     description = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     framework = models.CharField(max_length=32, choices=Framework.choices, default=Framework.HTML)
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.OTHER, help_text='Project category for dashboard grouping')
     template_key = models.CharField(max_length=64, blank=True)
     repo_provider = models.CharField(max_length=20, choices=RepoProvider.choices, default=RepoProvider.GITHUB)
     repo_owner = models.CharField(max_length=255, blank=True)

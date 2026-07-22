@@ -27,6 +27,8 @@ LLM_PRICING = {
     "openai": {"gpt-5.5": (5.00, 15.00), "gpt-5.4": (3.00, 12.00)},
     "anthropic": {"claude-4-opus": (15.00, 75.00), "claude-4-sonnet": (3.00, 15.00), "claude-4-haiku": (0.80, 4.00), "claude-3": (3.00, 15.00)},
     "groq": {"gpt-oss-120b": (0.15, 0.30), "gpt-oss-20b": (0.075, 0.15), "llama-3.3-70b": (0.59, 0.79)},
+    "moonshot": {"kimi-k3": (3.00, 15.00), "kimi-k2": (1.00, 4.00)},
+    "ollama-cloud": {"glm-5": (0.0, 0.0), "kimi": (0.0, 0.0), "deepseek": (0.0, 0.0), "qwen": (0.0, 0.0), "nemotron": (0.0, 0.0), "gpt-oss": (0.0, 0.0)},
 }
 
 def _estimate_cost(provider, model, prompt_tokens, completion_tokens):
@@ -103,6 +105,27 @@ def _provider_config(session_override: str = None, model_override: str = None, u
             "model": model_override or os.environ.get("STUDIO_MODEL", ""),
             "format": "openai",
         },
+        "moonshot": {
+            "provider": "moonshot",
+            "api_key": user_key or os.environ.get("MOONSHOT_API_KEY", ""),
+            "base_url": os.environ.get("MOONSHOT_BASE_URL", "https://api.moonshot.ai/v1"),
+            "model": model_override or "kimi-k3",
+            "format": "openai",
+        },
+        "groq": {
+            "provider": "groq",
+            "api_key": user_key or os.environ.get("GROQ_API_KEY", ""),
+            "base_url": os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+            "model": model_override or "openai/gpt-oss-120b",
+            "format": "openai",
+        },
+        "ollama-cloud": {
+            "provider": "ollama-cloud",
+            "api_key": user_key or os.environ.get("OLLAMA_API_KEY", ""),
+            "base_url": os.environ.get("OLLAMA_BASE_URL", "https://ollama.com/v1"),
+            "model": model_override or "glm-5.2",
+            "format": "openai",
+        },
     }
 
     return configs.get(provider, configs["zai"])
@@ -139,6 +162,18 @@ AVAILABLE_MODELS = {
     ],
     "local": [
         {"model": "", "label": "Server default"},
+    ],
+    "moonshot": [
+        {"model": "kimi-k3", "label": "Kimi K3 (flagship, 1M context)", "vision": True},
+        {"model": "kimi-k2", "label": "Kimi K2 (fast, affordable)", "vision": False},
+    ],
+    "ollama-cloud": [
+        {"model": "glm-5.2", "label": "GLM-5.2 (1M context, reasoning)", "vision": False},
+        {"model": "deepseek-v4-pro", "label": "DeepSeek V4 Pro (1M context)", "vision": False},
+        {"model": "kimi-k2.7-code", "label": "Kimi K2.7 Code", "vision": False},
+        {"model": "nemotron-3-ultra", "label": "Nemotron 3 Ultra (550B)", "vision": False},
+        {"model": "qwen3.5:397b", "label": "Qwen 3.5 (397B)", "vision": False},
+        {"model": "gpt-oss:120b", "label": "GPT-OSS 120B", "vision": False},
     ],
 }
 

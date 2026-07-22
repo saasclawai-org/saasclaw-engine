@@ -249,9 +249,13 @@ def _push_to_github_after_deploy(project: Project, triggered_by=None) -> None:
         else:
             logger.warning("GitHub push failed for %s: %s", project.slug, result.stderr.strip())
     finally:
-        # Always restore bare repo remote
-        sp.run(['git', 'remote', 'set-url', 'origin', bare_url],
-               cwd=str(repo_path), capture_output=True, text=True, timeout=10)
+        # Restore bare repo remote if it exists, otherwise keep GitHub URL
+        if Path(bare_url).exists():
+            sp.run(['git', 'remote', 'set-url', 'origin', bare_url],
+                   cwd=str(repo_path), capture_output=True, text=True, timeout=10)
+        else:
+            sp.run(['git', 'remote', 'set-url', 'origin', f'git@github.com:{project.repo_owner}/{project.repo_name}.git'],
+                   cwd=str(repo_path), capture_output=True, text=True, timeout=10)
 
 
 def deploy_preview(project: Project, triggered_by=None) -> Deployment:
