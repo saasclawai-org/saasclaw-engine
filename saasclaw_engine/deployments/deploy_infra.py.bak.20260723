@@ -829,24 +829,29 @@ def _ensure_nginx_static(service_name, domain, web_root, log_file=None):
     If a custom (manually-created) nginx config exists for this domain,
     skip overwriting to preserve custom API proxy rules.
     """
-    # Check for custom nginx configs that should not be overwritten.
-    # Match by service_name — only skip if THIS deploy's service_name is custom.
+    # Check for custom nginx configs that should not be overwritten
     custom_configs = [
         'traction-preview',  # Traction frontend has custom /api/ proxy to port 21019
     ]
-    if service_name in custom_configs:
-        # This deploy has a custom config — make sure it's enabled
-        custom_path = Path('/etc/nginx/sites-available') / service_name
-        custom_enabled = Path('/etc/nginx/sites-enabled') / service_name
-        if custom_path.exists() and not custom_enabled.exists():
-            subprocess.run(['sudo', 'ln', '-sfn', str(custom_path), str(custom_enabled)],
-                           capture_output=True, timeout=10)
-        subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, timeout=10)
-        subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], capture_output=True, timeout=10)
-        if log_file:
-            with log_file.open('a', encoding='utf-8') as h:
-                h.write(f'Preserved custom nginx config: {service_name}\n')
-        return True
+    for custom_name in custom_configs:
+        custom_path = Path('/etc/nginx/sites-available') / custom_name
+        if custom_path.exists() and custom_name not in service_name:
+            # This domain has a custom config — make sure it's enabled
+            custom_enabled = Path('/etc/nginx/sites-enabled') / custom_name
+            if not custom_enabled.exists():
+                subprocess.run(['sudo', 'ln', '-sfn', str(custom_path), str(custom_enabled)],
+                               capture_output=True, timeout=10)
+            # Remove auto-generated config if it conflicts
+            auto_enabled = Path('/etc/nginx/sites-enabled') / service_name
+            if auto_enabled.exists():
+                subprocess.run(['sudo', 'rm', '-f', str(auto_enabled)],
+                               capture_output=True, timeout=10)
+            subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, timeout=10)
+            subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], capture_output=True, timeout=10)
+            if log_file:
+                with log_file.open('a', encoding='utf-8') as h:
+                    h.write(f'Preserved custom nginx config: {custom_name}\n')
+            return True
 
     ssl_cert, ssl_key = _pick_ssl_certs(domain)
     nginx_content = '\n'.join([
