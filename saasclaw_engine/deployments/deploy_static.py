@@ -143,6 +143,21 @@ def _deploy_static_environment(project: Project, environment: Environment, deplo
         'POSTGRES_PORT': db_port,
         'DATABASE_URL': database_url,
     }}
+
+    # Inject Predator LLM credentials for projects with require_gateway enabled
+    if getattr(project, 'require_gateway', False):
+        try:
+            from saasclaw_engine.studio_models.models import ProviderKey
+            pk = ProviderKey.objects.filter(provider='predator').first()
+            if pk and pk.provider_data:
+                pd = pk.provider_data
+                env_values.setdefault('PREDATOR_BASE_URL', 'https://proliant-vllm.criticalpathsecurity.io/v1')
+                env_values.setdefault('PREDATOR_MODEL', 'openai/gpt-oss-20b')
+                env_values.setdefault('PREDATOR_CLIENT_ID', pd.get('client_id', ''))
+                env_values.setdefault('PREDATOR_CLIENT_SECRET', pd.get('client_secret', ''))
+        except Exception:
+            pass
+
     _write_text(env_file, _serialize_env_file(env_values))
 
     build_cmd = environment.build_command or 'echo "No build step"'
