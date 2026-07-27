@@ -707,7 +707,7 @@ def projects_list_create(request):
     fw = serializer.validated_data['framework']
     template_name = fw if fw in ('html', 'react', 'vite_react', 'nextjs', 'vue', 'svelte',
                                    'django', 'flask', 'fastapi', 'supabase', 'hugo',
-                                   'dotnet', 'react-dotnet', 'spring-boot', 'firebase',
+                                   'dotnet', 'react-dotnet', 'spring-boot', 'firebase', 'angular',
                                    'htmx', 'react-django') else 'html'
     _create_from_template(template_name, workspace_path, name, slug, bare_repo)
 

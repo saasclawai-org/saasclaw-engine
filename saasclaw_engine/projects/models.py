@@ -24,6 +24,8 @@ class Project(models.Model):
         DJANGO = 'django', 'Django App'
         SUPABASE = 'supabase', 'React + Supabase'
         FIREBASE = 'firebase', 'React + Firebase'
+        ANGULAR = 'angular', 'Angular'
+        DOTNET = 'dotnet', '.NET (C#)'
 
     class RepoProvider(models.TextChoices):
         GITHUB = 'github', 'GitHub'

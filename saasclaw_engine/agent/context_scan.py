@@ -227,6 +227,8 @@ def _scan_codebase_context(workspace_path: str) -> str:
             project_type = "React"
         elif "vite" in deps or "vite" in dev_deps:
             project_type = "Vite"
+        elif "@angular/core" in deps or "@angular/core" in dev_deps:
+            project_type = "Angular"
         elif "express" in deps:
             project_type = "Express"
         elif os.path.exists(os.path.join(workspace_path, "hugo.toml")):
@@ -466,6 +468,35 @@ def _scan_codebase_context(workspace_path: str) -> str:
         hints.append("Business logic → separate modules.")
         hints.append("Data access → model or repository modules.")
         hints.append("File size: never exceed 500 lines. Split into modules by concern.")
+
+    # --- Phase 5e: Security rules (ALL backend types) ---
+    backend_types = {"Django", "Flask", "Express", "Next.js", ".NET", "Go", "Rust", "FastAPI"}
+    if project_type in backend_types or ("api" in str(source_dirs).lower()):
+        hints.append("")
+        hints.append("Security rules (CRITICAL — follow ALL of these):")
+        hints.append("- CORS: NEVER use origin:true or reflect arbitrary origins. Always hardcode specific allowed origins.")
+        hints.append("- CORS: If the app has no frontend on a different origin, CORS is NOT needed at all.")
+        hints.append("- Express: use app.use(cors({ origin: ['https://yourdomain.com'], credentials: true })) — NEVER origin:true.")
+        hints.append("- Express: add helmet() for security headers. app.use(helmet()).")
+        hints.append("- Django: keep CORS_ALLOWED_ORIGINS in settings.py as an explicit list. Never use wildcard.")
+        hints.append("- Flask: use flask-cors with specific origins. Never CORS(resources={r'/*': {'origins': '*'}}).")
+        hints.append("- .NET: Use [AllowAnonymous] only on login/register. All other endpoints need [Authorize].")
+        hints.append("- Never set Access-Control-Allow-Origin: * when credentials are included.")
+        hints.append("- Rate limit auth endpoints: login, register, password reset (5 requests/minute per IP).")
+        hints.append("- Never expose .env, API keys, or secrets in client-side code or responses.")
+
+    # --- Angular-specific rules ---
+    if project_type == "Angular":
+        hints.append("")
+        hints.append("Angular TypeScript rules (CRITICAL — Angular strict mode WILL fail the build):")
+        hints.append("- When accessing properties on `Record<string, string>` or index-signature types, ALWAYS use bracket notation: obj['key'], NEVER dot notation: obj.key")
+        hints.append("- This applies to API response data like `data.properties?.name` -> MUST be `data.properties?.['name']`")
+        hints.append("- Same for nested index signatures: `r.associations?.contacts` -> `r.associations?.['contacts']`")
+        hints.append("- Use standalone components (not NgModule). Use inject() for DI, not constructor injection.")
+        hints.append("- Use new control flow: @if, @for, @switch — not *ngIf, *ngFor, *ngSwitch")
+        hints.append("- Angular 19 build output goes to dist/<project-name>/browser/ — the deploy pipeline handles this automatically.")
+        hints.append("- One component per file. Services in separate .service.ts files. Models in .model.ts files.")
+        hints.append("- Use `signals` and `computed()` for reactive state — not BehaviorSubject unless using RxJS streams.")
 
     # --- Phase 6: Key files listing ---
     key_files = []

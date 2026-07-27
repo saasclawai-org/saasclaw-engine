@@ -60,7 +60,33 @@ def _detect_output_dir(repo_path: Path, build_cmd: str = '') -> str:
             # Next.js default
             return '.next'
 
-    # --- Check package.json build script for Vite ---
+    # --- Check angular.json for outputPath ---
+    angular_json = repo_path / 'angular.json'
+    if angular_json.exists():
+        try:
+            data = _json.loads(angular_json.read_text())
+            projects = data.get('projects', {})
+            for pname, pconf in projects.items():
+                # Angular 19 application builder: outputPath is a direct string
+                arch = pconf.get('architect', {}).get('build', {})
+                opts = arch.get('options', {})
+                out_path = opts.get('outputPath') or opts.get('outputPath', '')
+                if out_path:
+                    return str(out_path)
+                # Older browser builder also uses outputPath
+                if isinstance(out_path, dict):
+                    # Angular 17+ may use object form
+                    base = out_path.get('base', '')
+                    if base:
+                        return base
+            # Angular default convention: dist/<project-name>/browser
+            if projects:
+                first_project = list(projects.keys())[0]
+                return f'dist/{first_project}/browser'
+        except Exception:
+            pass
+
+    # --- Check package.json build script ---
     pkg = repo_path / 'package.json'
     if pkg.exists():
         try:
@@ -73,11 +99,14 @@ def _detect_output_dir(repo_path: Path, build_cmd: str = '') -> str:
                 return '.output/public'
             if 'astro' in build_script.lower():
                 return 'dist'
+            if 'ng build' in build_script.lower() or '@angular' in str(data.get('dependencies', {})):
+                # Angular fallback if no angular.json
+                return 'dist'
         except Exception:
             pass
 
     # --- Fallback: pick first directory that exists ---
-    candidates = ['dist', 'web', 'build', 'out', '_site', '.next', '.output/public']
+    candidates = ['dist/angular/browser', 'dist', 'web', 'build', 'out', '_site', '.next', '.output/public']
     for candidate in candidates:
         if (repo_path / candidate).is_dir():
             return candidate
