@@ -685,7 +685,7 @@ def _write_and_validate_nginx(site_name, nginx_content, log_file=None):
 
     return True
 
-def _ensure_nginx_spa_proxy(service_name, domain, port, frontend_root, static_root, log_file=None):
+def _ensure_nginx_spa_proxy(service_name, domain, port, frontend_root, static_root, log_file=None, include_predator=False):
     """Write nginx config that serves a React SPA and proxies /api/ to Django."""
     ssl_cert, ssl_key = _pick_ssl_certs(domain)
     nginx_content = '\n'.join([
@@ -761,7 +761,7 @@ def _ensure_nginx_spa_proxy(service_name, domain, port, frontend_root, static_ro
         raise RuntimeError(f'Failed to write/validate SPA nginx config for {service_name}')
 
 
-def _ensure_nginx_proxy(service_name, domain, port, log_file=None, upgrade=False):
+def _ensure_nginx_proxy(service_name, domain, port, log_file=None, upgrade=False, include_predator=False):
     """Write (or overwrite) an nginx reverse-proxy site config and reload."""
     ssl_cert, ssl_key = _pick_ssl_certs(domain)
     upgrade_lines = [
@@ -823,7 +823,7 @@ def _ensure_nginx_proxy(service_name, domain, port, log_file=None, upgrade=False
         raise RuntimeError(f'Failed to write/validate nginx config for {service_name}')
 
 
-def _ensure_nginx_static(service_name, domain, web_root, log_file=None):
+def _ensure_nginx_static(service_name, domain, web_root, log_file=None, include_predator=False):
     """Write (or overwrite) an nginx static-file site config and reload.
 
     If a custom (manually-created) nginx config exists for this domain,
@@ -870,6 +870,7 @@ def _ensure_nginx_static(service_name, domain, web_root, log_file=None):
         '',
         '    client_max_body_size 25m;',
         '',
+        ('    include /etc/nginx/snippets/predator-proxy.conf;\n\n' if include_predator else '') +
         '    include ' + ('/etc/nginx/snippets/saasclaw-staging-branding.conf' if 'staging.' in settings.PREVIEW_BASE_DOMAIN else '/etc/nginx/snippets/saasclaw-preview-branding.conf') + ';',
         '',
         '    root ' + web_root + ';',

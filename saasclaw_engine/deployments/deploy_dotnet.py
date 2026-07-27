@@ -342,9 +342,9 @@ def _deploy_dotnet_environment(project: Project, environment: Environment, deplo
 
     # Nginx proxy (SPA via nginx, or standard if dotnet serves static files)
     if has_frontend and frontend_web_root:
-        _ensure_nginx_spa_proxy(service_name, environment.domain, environment.app_port, frontend_web_root, str(static_root) if static_root.is_dir() else None, log_file)
+        _ensure_nginx_spa_proxy(service_name, environment.domain, environment.app_port, frontend_web_root, str(static_root) if static_root.is_dir() else None, log_file, include_predator=getattr(project, "require_gateway", False))
     else:
-        _ensure_nginx_proxy(service_name, environment.domain, environment.app_port, log_file=log_file)
+        _ensure_nginx_proxy(service_name, environment.domain, environment.app_port, log_file=log_file, include_predator=getattr(project, "require_gateway", False))
 
     # Start service
     _restart_service(service_name, log_file)

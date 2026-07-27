@@ -145,16 +145,23 @@ def _deploy_static_environment(project: Project, environment: Environment, deplo
     }}
 
     # Inject Predator LLM credentials for projects with require_gateway enabled
+    predator_env = {}
     if getattr(project, 'require_gateway', False):
         try:
             from saasclaw_engine.studio_models.models import ProviderKey
             pk = ProviderKey.objects.filter(provider='predator').first()
             if pk and pk.provider_data:
                 pd = pk.provider_data
-                env_values.setdefault('PREDATOR_BASE_URL', 'https://proliant-vllm.criticalpathsecurity.io/v1')
-                env_values.setdefault('PREDATOR_MODEL', 'openai/gpt-oss-20b')
-                env_values.setdefault('PREDATOR_CLIENT_ID', pd.get('client_id', ''))
-                env_values.setdefault('PREDATOR_CLIENT_SECRET', pd.get('client_secret', ''))
+                predator_env = {
+                    'PREDATOR_BASE_URL': 'https://proliant-vllm.criticalpathsecurity.io/v1',
+                    'PREDATOR_MODEL': 'openai/gpt-oss-20b',
+                    'PREDATOR_CLIENT_ID': pd.get('client_id', ''),
+                    'PREDATOR_CLIENT_SECRET': pd.get('client_secret', ''),
+                }
+                env_values.setdefault('PREDATOR_BASE_URL', predator_env['PREDATOR_BASE_URL'])
+                env_values.setdefault('PREDATOR_MODEL', predator_env['PREDATOR_MODEL'])
+                env_values.setdefault('PREDATOR_CLIENT_ID', predator_env['PREDATOR_CLIENT_ID'])
+                env_values.setdefault('PREDATOR_CLIENT_SECRET', predator_env['PREDATOR_CLIENT_SECRET'])
         except Exception:
             pass
 
@@ -174,14 +181,18 @@ def _deploy_static_environment(project: Project, environment: Environment, deplo
     web_root = Path(project.workspace_root) / 'runtime' / environment.name / 'web'
     web_root.mkdir(parents=True, exist_ok=True)
 
+    # --- Framework-specific build env ---
+    build_env = {}
+
+    # Also inject Predator creds into build_env so set-env.js / build scripts can read them
+    if predator_env:
+        build_env.update(predator_env)
+
     # --- Fix ownership BEFORE building ---
     # Gunicorn (root) writes files, celery (saasclaw) builds them.
     # Normalize ownership so build tools don't hit permission errors.
     _normalize_ownership(repo_path, log_file)
     _normalize_ownership(Path(project.workspace_root) / 'runtime', log_file)
-
-    # --- Framework-specific build env ---
-    build_env = {}
 
     # Inject DB-stored env vars into build environment (Vite needs VITE_* at build time)
     from saasclaw_engine.deployments.models import EnvironmentVariable
@@ -253,7 +264,7 @@ def _deploy_static_environment(project: Project, environment: Environment, deplo
 
     # Set up nginx (using sudo)
     service_name = f"saasclaw-{_slugify_system_name(project.slug)}-{environment.name}"
-    _ensure_nginx_static(service_name, environment.domain, str(web_root), log_file=log_file)
+    _ensure_nginx_static(service_name, environment.domain, str(web_root), log_file=log_file, include_predator=getattr(project, "require_gateway", False))
 
 
 
