@@ -214,6 +214,15 @@ def _deploy_static_environment(project: Project, environment: Environment, deplo
         _run_command(build_cmd, repo_path, log_file, env=build_env or None)
 
     output_path = repo_path / output_dir
+
+    # Angular 19 application builder creates a nested browser/ subdir
+    # inside outputPath. If index.html is in output_path/browser/, use that.
+    nested_browser = output_path / 'browser'
+    if nested_browser.is_dir() and (nested_browser / 'index.html').exists():
+        output_path = nested_browser
+        with log_file.open('a', encoding='utf-8') as handle:
+            handle.write(f'Detected Angular nested browser/ dir, using {output_path}\n')
+
     with log_file.open('a', encoding='utf-8') as handle:
         handle.write(f'Copying from {output_path} -> {web_root}\n')
     if output_path.exists():
