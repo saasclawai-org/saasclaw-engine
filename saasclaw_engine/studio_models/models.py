@@ -12,20 +12,35 @@ PROVIDER_CHOICES = [
     ('zai', 'Z.ai'),
     ('openai', 'OpenAI'),
     ('anthropic', 'Anthropic'),
+    ('predator', 'Predator (vLLM)'),
 ]
 
 PROVIDER_MODELS = {
     'zai': ['glm-5.2', 'glm-5.1', 'glm-5v-turbo', 'glm-5-turbo', 'glm-4.7', 'glm-4.5-air'],
     'openai': ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'o3', 'o4-mini'],
     'anthropic': ['claude-sonnet-4-20250514', 'claude-opus-4-20250515', 'claude-haiku-4-20250414'],
+    'predator': ['openai/gpt-oss-20b'],
+}
+
+# Providers that use multi-field credentials instead of a single API key
+PROVIDER_DATA_FIELDS = {
+    'predator': {
+        'fields': [
+            {'key': 'client_id', 'label': 'Client ID', 'type': 'text'},
+            {'key': 'client_secret', 'label': 'Client Secret', 'type': 'password'},
+        ],
+        'base_url': 'https://proliant-vllm.criticalpathsecurity.io/v1',
+        'headers': {'CF-Access-Client-Id': '{client_id}', 'CF-Access-Client-Secret': '{client_secret}'},
+    },
 }
 
 
 class ProviderKey(models.Model):
     """A user's API key for an LLM provider."""
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='provider_keys')
-    provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES)
-    api_key = models.CharField(max_length=500)
+    provider = models.CharField(max_length=30, choices=PROVIDER_CHOICES)
+    api_key = models.CharField(max_length=500, blank=True, default="")
+    provider_data = models.JSONField(default=dict, blank=True, help_text="Extra fields for multi-key providers (e.g. Predator client_id/client_secret)")
     default_model = models.CharField(max_length=100, blank=True, default="")
     is_active = models.BooleanField(default=True)
     is_platform = models.BooleanField(default=False, help_text="Platform-shared key (e.g. Groq free tier). Users don't see their own.")
