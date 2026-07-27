@@ -54,6 +54,29 @@ EFFICIENCY_WARNING_THRESHOLD = 12  # Warn the model to wrap up after this many c
 # Provider configurations
 # ---------------------------------------------------------------------------
 
+def _get_predator_headers(user=None) -> dict:
+    """Fetch CF Access credentials from ProviderKey or env vars."""
+    client_id = os.environ.get("VLLM_CLIENT_ID", "")
+    client_secret = os.environ.get("VLLM_CLIENT_SECRET", "")
+    # Try DB-stored keys first
+    if user:
+        try:
+            from saasclaw_engine.studio_models.models import ProviderKey
+            pk = ProviderKey.objects.filter(provider="predator").first()
+            if pk and pk.provider_data:
+                pd = pk.provider_data
+                client_id = pd.get("client_id", client_id)
+                client_secret = pd.get("client_secret", client_secret)
+        except Exception:
+            pass
+    if client_id and client_secret:
+        return {
+            "CF-Access-Client-Id": client_id,
+            "CF-Access-Client-Secret": client_secret,
+        }
+    return {}
+
+
 def _provider_config(session_override: str = None, model_override: str = None, user=None) -> dict:
     """Get the active LLM provider + credentials from settings/env.
 
@@ -104,6 +127,14 @@ def _provider_config(session_override: str = None, model_override: str = None, u
             "base_url": os.environ.get("STUDIO_LOCAL_URL", "http://127.0.0.1:8081/v1"),
             "model": model_override or os.environ.get("STUDIO_MODEL", ""),
             "format": "openai",
+        },
+        "predator": {
+            "provider": "predator",
+            "api_key": "no-key",
+            "base_url": "https://proliant-vllm.criticalpathsecurity.io/v1",
+            "model": model_override or "openai/gpt-oss-20b",
+            "format": "openai",
+            "extra_headers": _get_predator_headers(user),
         },
         "moonshot": {
             "provider": "moonshot",
@@ -205,13 +236,19 @@ def _call_openai(config: dict, messages: list[dict], tools: list[dict] = None) -
     max_retries = 6
 
     for attempt in range(max_retries):
+        req_headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {config['api_key']}",
+            "User-Agent": "SaaSClaw/1.0",
+        }
+        # Merge in provider-specific headers (e.g. CF Access for Predator)
+        extra = config.get("extra_headers")
+        if extra:
+            req_headers.update(extra)
         req = urllib_request.Request(
             f"{base_url}/chat/completions",
             data=data,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {config['api_key']}",
-            },
+            headers=req_headers,
             method="POST",
         )
 
@@ -475,13 +512,18 @@ def _call_llm_stream(messages: list[dict], tools: list[dict] = None, provider: s
         payload["tool_choice"] = "auto"
 
     data = json.dumps(payload).encode("utf-8")
+    stream_headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {config['api_key']}",
+        "User-Agent": "SaaSClaw/1.0",
+    }
+    extra = config.get("extra_headers")
+    if extra:
+        stream_headers.update(extra)
     req = urllib_request.Request(
         f"{base_url}/chat/completions",
         data=data,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {config['api_key']}",
-        },
+        headers=stream_headers,
         method="POST",
     )
 
