@@ -1,4 +1,5 @@
 """Public API key model for external access to the paycheck calculator API."""
+import time
 import hashlib
 import secrets
 import string
@@ -63,3 +64,26 @@ class ApiKey(models.Model):
             usage_limit=usage_limit,
         )
         return apikey, raw_key
+
+
+
+class HubSpotConnection(models.Model):
+    """Per-project HubSpot OAuth connection for MCP bridge."""
+    project = models.OneToOneField(
+        'projects.Project',
+        on_delete=models.CASCADE,
+        related_name='hubspot_connection'
+    )
+    access_token = models.TextField()
+    refresh_token = models.TextField()
+    expires_at = models.BigIntegerField(help_text='Unix timestamp when access_token expires')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'HubSpot -> {self.project.slug}'
+
+    @property
+    def is_expired(self):
+        import time as _time
+        return _time.time() > self.expires_at - 300

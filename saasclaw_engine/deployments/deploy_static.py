@@ -264,7 +264,53 @@ def _deploy_static_environment(project: Project, environment: Environment, deplo
 
     # Set up nginx (using sudo)
     service_name = f"saasclaw-{_slugify_system_name(project.slug)}-{environment.name}"
-    _ensure_nginx_static(service_name, environment.domain, str(web_root), log_file=log_file, include_predator=getattr(project, "require_gateway", False))
+
+    # Write project-specific proxy snippets (token-injected)
+    from saasclaw_engine.deployments.models import EnvironmentVariable
+    hubspot_token = ''
+    for ev in EnvironmentVariable.objects.filter(environment=environment):
+        if ev.key == 'HUBSPOT_TOKEN':
+            hubspot_token = ev.value
+
+    # HubSpot proxy with token baked in (if configured)
+    if hubspot_token:
+        snippet_path = Path(f'/etc/nginx/snippets/{service_name}-hubspot.conf')
+        snippet = "\n".join([
+            'location /api/hubspot/ {',
+            '    proxy_pass https://api.hubapi.com/;',
+            '    proxy_ssl_server_name on;',
+            '    proxy_set_header Host api.hubapi.com;',
+            f'    proxy_set_header Authorization "Bearer {hubspot_token}";',
+            '    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+            '    proxy_set_header X-Forwarded-Proto $scheme;',
+            '    proxy_http_version 1.1;',
+            "    proxy_set_header Connection '';",
+            '    proxy_buffering off;',
+            '    proxy_cache off;',
+            '    proxy_read_timeout 60s;',
+            '}',
+            '',
+        ])
+        try:
+            import subprocess as _sp
+            _sp.run(['sudo', 'tee', str(snippet_path)], input=snippet, text=True, capture_output=True, timeout=10)
+            _sp.run(['sudo', 'chmod', '644', str(snippet_path)], capture_output=True, timeout=5)
+            if log_file:
+                with log_file.open('a', encoding='utf-8') as h:
+                    h.write(f'Wrote HubSpot proxy snippet with token\n')
+        except Exception as e:
+            if log_file:
+                with log_file.open('a', encoding='utf-8') as h:
+                    h.write(f'WARNING: Could not write HubSpot snippet: {e}\n')
+
+    # Build list of extra includes for nginx
+    extra_includes = []
+    if getattr(project, 'require_gateway', False):
+        extra_includes.append('/etc/nginx/snippets/predator-proxy.conf')
+    if hubspot_token:
+        extra_includes.append(f'/etc/nginx/snippets/{service_name}-hubspot.conf')
+
+    _ensure_nginx_static(service_name, environment.domain, str(web_root), log_file=log_file, extra_includes=extra_includes)
 
 
 

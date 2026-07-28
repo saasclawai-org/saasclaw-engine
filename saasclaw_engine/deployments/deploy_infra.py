@@ -823,7 +823,7 @@ def _ensure_nginx_proxy(service_name, domain, port, log_file=None, upgrade=False
         raise RuntimeError(f'Failed to write/validate nginx config for {service_name}')
 
 
-def _ensure_nginx_static(service_name, domain, web_root, log_file=None, include_predator=False):
+def _ensure_nginx_static(service_name, domain, web_root, log_file=None, include_predator=False, extra_includes=None):
     """Write (or overwrite) an nginx static-file site config and reload.
 
     If a custom (manually-created) nginx config exists for this domain,
@@ -870,7 +870,7 @@ def _ensure_nginx_static(service_name, domain, web_root, log_file=None, include_
         '',
         '    client_max_body_size 25m;',
         '',
-        ('    include /etc/nginx/snippets/predator-proxy.conf;\n\n' if include_predator else '') +
+        ''.join(f'    include {inc};\n\n' for inc in (extra_includes or ([] + (['/etc/nginx/snippets/predator-proxy.conf'] if include_predator else [])))) +
         '    include ' + ('/etc/nginx/snippets/saasclaw-staging-branding.conf' if 'staging.' in settings.PREVIEW_BASE_DOMAIN else '/etc/nginx/snippets/saasclaw-preview-branding.conf') + ';',
         '',
         '    root ' + web_root + ';',
