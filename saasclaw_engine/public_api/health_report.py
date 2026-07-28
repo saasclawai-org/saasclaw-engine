@@ -115,7 +115,20 @@ def _mcp_search(project_slug, object_type, properties=None, limit=100, max_pages
     return all_results
 
 
-def _get_ticket_associations(project_slug, ticket_ids):
+def _fetch_association_batch(token, tid):
+    """Fetch ticket→company association for a single ticket."""
+    url = f'https://api.hubapi.com/crm/v4/objects/tickets/{tid}/associations/companies'
+    req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            return str(tid), [r['toObjectId'] for r in data.get('results', [])]
+    except Exception:
+        return str(tid), []
+
+
+def _get_ticket_associations(project_slug, ticket_ids, batch_size=10):
+    """Fetch ticket→company associations in parallel (10 concurrent requests)."""
     from .models import HubSpotConnection
     from .hubspot_mcp import _refresh_token_if_needed
     from saasclaw_engine.projects.models import Project
@@ -123,19 +136,58 @@ def _get_ticket_associations(project_slug, ticket_ids):
     conn = HubSpotConnection.objects.get(project=project)
     token = _refresh_token_if_needed(conn)
     result = {}
-    for tid in ticket_ids:
-        url = f'https://api.hubapi.com/crm/v4/objects/tickets/{tid}/associations/companies'
-        req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
-                result[str(tid)] = [r['toObjectId'] for r in data.get('results', [])]
-        except Exception:
-            result[str(tid)] = []
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=batch_size) as executor:
+        futures = {executor.submit(_fetch_association_batch, token, tid): tid for tid in ticket_ids}
+        for future in as_completed(futures):
+            tid, cids = future.result()
+            result[tid] = cids
     return result
 
 
-def _get_ticket_notes(project_slug, ticket_ids):
+def _fetch_note_bodies_batch(token, note_ids):
+    """Fetch note bodies for a batch of note IDs using HubSpot batch API."""
+    bodies = []
+    # HubSpot batch read: up to 100 per call
+    for i in range(0, len(note_ids), 100):
+        chunk = note_ids[i:i+100]
+        payload = json.dumps({'inputs': [{'id': str(nid)} for nid in chunk]}).encode()
+        url = 'https://api.hubapi.com/crm/v3/objects/notes/batch/read?properties=hs_note_body'
+        req = urllib.request.Request(url, data=payload, headers={
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json',
+        }, method='POST')
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read())
+                for r in data.get('results', []):
+                    raw = r.get('properties', {}).get('hs_note_body', '')
+                    clean = re.sub('<[^<]+?>', '', raw).strip()
+                    if clean:
+                        bodies.append(clean)
+        except Exception:
+            pass
+    return bodies
+
+
+def _fetch_ticket_notes_single(token, tid):
+    """Fetch notes for a single ticket: association lookup + batch note body read."""
+    url = f'https://api.hubapi.com/crm/v4/objects/tickets/{tid}/associations/notes'
+    req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            note_ids = [r['toObjectId'] for r in data.get('results', [])]
+            if not note_ids:
+                return str(tid), []
+            bodies = _fetch_note_bodies_batch(token, note_ids)
+            return str(tid), bodies
+    except Exception:
+        return str(tid), []
+
+
+def _get_ticket_notes(project_slug, ticket_ids, batch_size=10):
+    """Fetch ticket notes in parallel with batch note body reads."""
     from .models import HubSpotConnection
     from .hubspot_mcp import _refresh_token_if_needed
     from saasclaw_engine.projects.models import Project
@@ -143,25 +195,12 @@ def _get_ticket_notes(project_slug, ticket_ids):
     conn = HubSpotConnection.objects.get(project=project)
     token = _refresh_token_if_needed(conn)
     result = {}
-    for tid in ticket_ids:
-        url = f'https://api.hubapi.com/crm/v4/objects/tickets/{tid}/associations/notes'
-        req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
-                bodies = []
-                for nid in [r['toObjectId'] for r in data.get('results', [])]:
-                    nurl = f'https://api.hubapi.com/crm/v3/objects/notes/{nid}?properties=hs_note_body'
-                    nreq = urllib.request.Request(nurl, headers={'Authorization': f'Bearer {token}'})
-                    try:
-                        with urllib.request.urlopen(nreq, timeout=10) as nresp:
-                            nd = json.loads(nresp.read())
-                            clean = re.sub('<[^<]+?>', '', nd.get('properties',{}).get('hs_note_body','')).strip()
-                            if clean: bodies.append(clean)
-                    except Exception: pass
-                result[str(tid)] = bodies
-        except Exception:
-            result[str(tid)] = []
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=batch_size) as executor:
+        futures = {executor.submit(_fetch_ticket_notes_single, token, tid): tid for tid in ticket_ids}
+        for future in as_completed(futures):
+            tid, bodies = future.result()
+            result[tid] = bodies
     return result
 
 

@@ -110,14 +110,21 @@ class Command(BaseCommand):
         for t in HubspotTicket.objects.filter(project=project):
             existing_tickets[t.hubspot_id] = t
 
-        # Determine which tickets are new or changed
+        # Determine which tickets are new or changed (skip closed tickets for heavy processing)
         changed_ids = []
         unchanged_count = 0
+        closed_ids = set()
         for t in tickets_raw:
             hs_id = str(t['id'])
             props = t.get('properties', {})
             updated_str = props.get('hs_lastmodifieddate', '')
             hs_updated = self._parse_dt(updated_str)
+            stage = props.get('hs_pipeline_stage', '')
+            status = TICKET_STAGES.get(str(stage), f'Stage {stage}')
+
+            # Skip closed tickets — no need for associations, notes, or sentiment
+            if status == 'Closed':
+                closed_ids.add(hs_id)
 
             existing = existing_tickets.get(hs_id)
             if existing and existing.last_updated_hubspot and hs_updated:
@@ -127,17 +134,21 @@ class Command(BaseCommand):
 
             changed_ids.append(hs_id)
 
-        self.stdout.write(f'  Tickets: {len(tickets_raw)} total, {len(changed_ids)} new/changed, {unchanged_count} unchanged (skipped)')
+        # Only process non-closed changed tickets for associations/notes/sentiment
+        changed_open_ids = [tid for tid in changed_ids if tid not in closed_ids]
+        changed_closed_ids = [tid for tid in changed_ids if tid in closed_ids]
 
-        # Only fetch associations + notes + sentiment for changed tickets
-        if changed_ids:
-            associations = _get_ticket_associations(project_slug, changed_ids)
-            ticket_notes = _get_ticket_notes(project_slug, changed_ids)
-            self.stdout.write(f'  Fetched associations + notes for {len(changed_ids)} tickets')
+        self.stdout.write(f'  Tickets: {len(tickets_raw)} total, {len(changed_ids)} new/changed ({len(changed_open_ids)} open, {len(changed_closed_ids)} closed), {unchanged_count} unchanged (skipped)')
+
+        # Only fetch associations + notes for OPEN changed tickets (optimization #2 + #3)
+        if changed_open_ids:
+            associations = _get_ticket_associations(project_slug, changed_open_ids)
+            ticket_notes = _get_ticket_notes(project_slug, changed_open_ids)
+            self.stdout.write(f'  Fetched associations + notes for {len(changed_open_ids)} open tickets (parallel + batch)')
         else:
             associations = {}
             ticket_notes = {}
-            self.stdout.write(f'  No changed tickets — skipped association/note fetch entirely')
+            self.stdout.write(f'  No open changed tickets — skipped association/note fetch entirely')
 
         now = datetime.now(timezone.utc)
 
@@ -150,7 +161,7 @@ class Command(BaseCommand):
             created_str = props.get('createdate', '')
             updated_str = props.get('hs_lastmodifieddate', '')
 
-            if hs_id in changed_ids:
+            if hs_id in changed_open_ids:
                 # Full processing: sentiment + notes + associations
                 notes = ticket_notes.get(hs_id, [])
                 full_text = ' '.join([props.get('subject', ''), props.get('content', ''), *notes])
@@ -176,6 +187,31 @@ class Command(BaseCommand):
                         'last_updated_hubspot': self._parse_dt(updated_str),
                     }
                 )
+            elif hs_id in changed_closed_ids:
+                # Closed ticket: update fields but skip associations/notes/sentiment
+                existing = existing_tickets.get(hs_id)
+                prior_sentiment = existing.sentiment if existing else 'neutral'
+                prior_score = existing.sentiment_score if existing else 0
+                prior_summary = existing.sentiment_summary if existing else ''
+                prior_flags = existing.sentiment_flags if existing else []
+                prior_notes = existing.notes if existing else []
+
+                HubspotTicket.objects.update_or_create(
+                    project=project, hubspot_id=hs_id,
+                    defaults={
+                        'subject': props.get('subject', '(no subject)'),
+                        'description': props.get('content', ''),
+                        'status': status,
+                        'pipeline_stage': str(stage),
+                        'sentiment': prior_sentiment,
+                        'sentiment_score': prior_score,
+                        'sentiment_summary': prior_summary,
+                        'sentiment_flags': prior_flags,
+                        'notes': prior_notes,
+                        'created_at_hubspot': self._parse_dt(created_str),
+                        'last_updated_hubspot': self._parse_dt(updated_str),
+                    }
+                )
             else:
                 # Unchanged: just update company FK + status (in case company was just linked)
                 existing = existing_tickets.get(hs_id)
@@ -194,7 +230,7 @@ class Command(BaseCommand):
                 # Try to find company via name match as fallback
                 pass  # associations only fetched for changed tickets
 
-        self.stdout.write(f'  Tickets: {len(tickets_raw)} processed ({len(changed_ids)} full, {unchanged_count} light)')
+        self.stdout.write(f'  Tickets: {len(tickets_raw)} processed ({len(changed_open_ids)} full, {len(changed_closed_ids)} closed-light, {unchanged_count} unchanged)')
 
         # ─── Prune deleted records ────────────────────────
         hs_company_ids = {str(c['id']) for c in companies_raw}
