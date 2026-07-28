@@ -118,8 +118,8 @@ def _mcp_search(project_slug, object_type, properties=None, limit=100, max_pages
     return all_results
 
 
-PREDATOR_URL = os.environ.get('PREDATOR_URL', 'https://proliant-ollama.criticalpathsecurity.io/v1/chat/completions')
-PREDATOR_MODEL = os.environ.get('PREDATOR_MODEL', 'ornith:35b')
+PREDATOR_URL = os.environ.get('PREDATOR_URL', 'https://proliant-vllm.criticalpathsecurity.io/v1/chat/completions')
+PREDATOR_MODEL = os.environ.get('PREDATOR_MODEL', 'openai/gpt-oss-20b')
 PREDATOR_CF_ID = os.environ.get('CF_ACCESS_CLIENT_ID', '')
 PREDATOR_CF_SECRET = os.environ.get('CF_ACCESS_CLIENT_SECRET', '')
 

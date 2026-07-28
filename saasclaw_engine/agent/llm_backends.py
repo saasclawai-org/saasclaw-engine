@@ -56,8 +56,8 @@ EFFICIENCY_WARNING_THRESHOLD = 12  # Warn the model to wrap up after this many c
 
 def _get_predator_headers(user=None) -> dict:
     """Fetch CF Access credentials from ProviderKey or env vars."""
-    client_id = os.environ.get("VLLM_CLIENT_ID", "")
-    client_secret = os.environ.get("VLLM_CLIENT_SECRET", "")
+    client_id = os.environ.get("VLLM_CLIENT_ID", "") or os.environ.get("CF_ACCESS_CLIENT_ID", "")
+    client_secret = os.environ.get("VLLM_CLIENT_SECRET", "") or os.environ.get("CF_ACCESS_CLIENT_SECRET", "")
     # Try DB-stored keys first
     if user:
         try:
@@ -157,6 +157,14 @@ def _provider_config(session_override: str = None, model_override: str = None, u
             "model": model_override or "glm-5.2",
             "format": "openai",
         },
+        "ornith": {
+            "provider": "ornith",
+            "api_key": "no-key",
+            "base_url": "https://proliant-ollama.criticalpathsecurity.io/v1",
+            "model": model_override or "ornith:35b",
+            "format": "openai",
+            "extra_headers": _get_predator_headers(user),
+        },
     }
 
     return configs.get(provider, configs["zai"])
@@ -205,6 +213,13 @@ AVAILABLE_MODELS = {
         {"model": "nemotron-3-ultra", "label": "Nemotron 3 Ultra (550B)", "vision": False},
         {"model": "qwen3.5:397b", "label": "Qwen 3.5 (397B)", "vision": False},
         {"model": "gpt-oss:120b", "label": "GPT-OSS 120B", "vision": False},
+    ],
+    "ornith": [
+        {"model": "ornith:35b", "label": "Ornith 35B (coding, self-hosted)", "vision": False},
+        {"model": "ornith:9b", "label": "Ornith 9B (fast, self-hosted)", "vision": False},
+    ],
+    "predator": [
+        {"model": "openai/gpt-oss-20b", "label": "GPT-OSS 20B (self-hosted vLLM)", "vision": False},
     ],
 }
 
