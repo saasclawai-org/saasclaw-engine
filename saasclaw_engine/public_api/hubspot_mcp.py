@@ -11,6 +11,8 @@ import json
 import secrets
 import time
 import logging
+import os
+import functools
 
 import requests
 import urllib.request
@@ -22,6 +24,23 @@ from django.views.decorators.http import require_http_methods
 from .models import HubSpotConnection
 
 logger = logging.getLogger(__name__)
+
+
+def require_jwt(view_func):
+    """Decorator: require a valid JWT token in Authorization header."""
+    @functools.wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        auth = request.headers.get('Authorization', '')
+        if not auth.startswith('Bearer '):
+            return JsonResponse({'error': 'Authentication required'}, status=401)
+        token = auth[7:]
+        try:
+            from rest_framework_simplejwt.tokens import AccessToken
+            AccessToken(token)  # Validates signature + expiry
+        except Exception:
+            return JsonResponse({'error': 'Invalid or expired token'}, status=401)
+        return view_func(request, *args, **kwargs)
+    return wrapper
 
 # HubSpot OAuth endpoints
 HS_AUTHORIZE_URL = 'https://mcp.hubspot.com/oauth/authorize/user'
@@ -45,9 +64,10 @@ ALLOWED_MCP_TOOLS = {
 # Tools that can write — require allow_write=true in the request body
 WRITE_TOOLS = {'manage_crm_objects'}
 
-# SaaSClaw MCP Auth App credentials
-HS_CLIENT_ID = 'f2364d15-6188-4cec-86f2-1c2f8232d47e'
-HS_CLIENT_SECRET = 'b638b936-0ec7-4d43-9bd4-733348f010af'
+# SaaSClaw MCP Auth App credentials (from environment, not hardcoded)
+import os
+HS_CLIENT_ID = os.environ.get('HS_CLIENT_ID', 'f2364d15-6188-4cec-86f2-1c2f8232d47e')
+HS_CLIENT_SECRET = os.environ.get('HS_CLIENT_SECRET', '')
 
 # Callback URL (registered in HubSpot MCP auth app)
 HS_REDIRECT_URI = 'https://app.saasclaw.ai/api/v1/hubspot/oauth/callback/'
@@ -258,6 +278,7 @@ def _mcp_list_tools(access_token):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@require_jwt
 def hubspot_mcp_call(request):
     """
     Bridge endpoint for apps to call HubSpot MCP tools.
@@ -472,6 +493,7 @@ CHATLOG_PATH = '/tmp/hubspot-chatbot.log'
 
 
 @require_POST
+@require_jwt
 def hubspot_chatlog(request):
     """Append a chatbot debug entry to the server log file."""
     try:

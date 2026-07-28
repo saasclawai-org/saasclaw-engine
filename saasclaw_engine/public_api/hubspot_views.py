@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from .hubspot_mcp import require_jwt
 
 HUBSPOT_PORTAL = '51524447'
 HS_BASE = f'https://app.hubspot.com/contacts/{HUBSPOT_PORTAL}'
@@ -14,6 +15,7 @@ HS_BASE = f'https://app.hubspot.com/contacts/{HUBSPOT_PORTAL}'
 
 @csrf_exempt
 @require_http_methods(['GET', 'POST'])
+@require_jwt
 def hubspot_dashboard_data(request):
     """Return cached dashboard data: companies, contacts, tickets with sentiment + health."""
     from saasclaw_engine.projects.models import Project
