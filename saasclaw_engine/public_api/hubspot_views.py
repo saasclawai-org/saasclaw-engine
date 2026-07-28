@@ -58,8 +58,8 @@ def hubspot_dashboard_data(request):
             days_since = (now - last_activity).days
 
         # Calculate health
-        status, reason = _calculate_health(
-            len(co_contacts), days_since, co.lifecycle_stage, co_tickets
+        status, reason, summary = _calculate_health(
+            len(co_contacts), days_since, co.lifecycle_stage, co_tickets, co.name, co.industry
         )
 
         clients.append({
@@ -72,6 +72,7 @@ def hubspot_dashboard_data(request):
             'ticketCount': len(co_tickets),
             'healthStatus': status,
             'healthReason': reason,
+            'healthSummary': summary,
             'daysSinceActivity': days_since,
             'lastActivity': last_activity.isoformat() if last_activity else '',
             'link': f'{HS_BASE}/company/{co.hubspot_id}',
@@ -115,11 +116,12 @@ def hubspot_dashboard_data(request):
     })
 
 
-def _calculate_health(contacts_count, days_since, lifecycle_stage, tickets):
-    """Health calc using DB ticket objects."""
+def _calculate_health(contacts_count, days_since, lifecycle_stage, tickets, company_name='', industry=''):
+    """Health calc using DB ticket objects. Returns (status, reason, summary)."""
     now = datetime.now(timezone.utc)
 
     open_tickets = [t for t in tickets if t.status != 'Closed']
+    closed_tickets = [t for t in tickets if t.status == 'Closed']
     stale_tickets = []
     for t in open_tickets:
         if t.last_updated_hubspot:
@@ -133,42 +135,126 @@ def _calculate_health(contacts_count, days_since, lifecycle_stage, tickets):
     waiting = [t for t in open_tickets if 'waiting' in t.status.lower() or 'progress' in t.status.lower()]
     very_neg = [t for t in open_tickets if t.sentiment == 'very-negative']
     neg = [t for t in open_tickets if t.sentiment == 'negative']
+    positive = [t for t in open_tickets if t.sentiment == 'positive']
 
+    # Build context for summary
+    stage = (lifecycle_stage or '').lower()
+    is_customer = stage in ('customer', 'closedwon')
+    stage_label = lifecycle_stage or 'lead'
+
+    # ─── CRITICAL ──────────────────────────────────────
     if very_neg:
         flags = list(set(f for t in very_neg for f in (t.sentiment_flags or [])))
+        subjects = [t.subject for t in very_neg[:3]]
         r = f"{len(very_neg)} ticket(s) strong negative"
         if flags: r += f" — {', '.join(flags[:4])}"
-        return 'critical', r
+        summary = f"🔴 {company_name or 'This client'} has {len(very_neg)} ticket(s) with strongly negative sentiment"
+        if subjects: summary += f": {', '.join(subjects)}"
+        if flags: summary += f". Flagged keywords: {', '.join(flags[:5])}."
+        if stale_tickets:
+            summary += f" {len(stale_tickets)} of these have been open >7 days."
+        summary += " Immediate escalation recommended."
+        return 'critical', r, summary
 
     if stale_tickets and waiting:
-        return 'critical', f"{len(stale_tickets)} ticket(s) waiting on us >7 days"
+        subjects = [t.subject for t in stale_tickets[:3]]
+        r = f"{len(stale_tickets)} ticket(s) waiting on us >7 days"
+        summary = f"🔴 {len(stale_tickets)} ticket(s) have been waiting on us for over 7 days"
+        if subjects: summary += f": {', '.join(subjects)}"
+        summary += ". Response SLA breached — prioritize resolution."
+        return 'critical', r, summary
 
-    if neg:
-        if days_since >= 30:
-            return 'critical', f"{len(neg)} negative ticket(s), no activity {days_since}d"
-        return 'at-risk', f"{len(neg)} ticket(s) negative sentiment"
-
-    if len(open_tickets) >= 3:
-        return 'at-risk', f"{len(open_tickets)} open tickets — high load"
+    if neg and days_since >= 30:
+        subjects = [t.subject for t in neg[:3]]
+        r = f"{len(neg)} negative ticket(s), no activity {days_since}d"
+        summary = f"🔴 {company_name or 'Client'} has {len(neg)} negative ticket(s)"
+        if subjects: summary += f" ({', '.join(subjects)})"
+        summary += f" and no activity for {days_since} days. High churn risk."
+        return 'critical', r, summary
 
     if days_since >= 60:
         r = f"No activity {days_since} days — may be churning"
-        if open_tickets: r += f", {len(open_tickets)} open"
-        return 'critical', r
+        summary = f"🔴 No activity from {company_name or 'this client'} in {days_since} days."
+        if is_customer:
+            summary += " They are a paying customer — likely churning."
+        else:
+            summary += " Prospect has gone cold."
+        if open_tickets:
+            summary += f" {len(open_tickets)} open ticket(s) unresolved."
+        summary += " Outreach needed urgently."
+        return 'critical', r, summary
+
+    # ─── AT RISK ───────────────────────────────────────
+    if neg:
+        subjects = [t.subject for t in neg[:3]]
+        r = f"{len(neg)} ticket(s) negative sentiment"
+        summary = f"🟡 {len(neg)} ticket(s) show negative sentiment"
+        if subjects: summary += f": {', '.join(subjects)}"
+        if days_since > 14:
+            summary += f". Last activity {days_since} days ago."
+        summary += " Monitor closely and proactively address."
+        return 'at-risk', r, summary
+
+    if len(open_tickets) >= 3:
+        subjects = [t.subject for t in open_tickets[:3]]
+        r = f"{len(open_tickets)} open tickets — high load"
+        summary = f"🟡 {len(open_tickets)} open tickets — high support load"
+        if subjects: summary += f": {', '.join(subjects)}"
+        if waiting:
+            summary += f". {len(waiting)} waiting on us."
+        summary += " Consider check-in call."
+        return 'at-risk', r, summary
 
     if days_since >= 30:
         r = f"Last activity {days_since} days ago — needs follow-up"
-        if open_tickets: r += f", {len(open_tickets)} open"
-        return 'at-risk', r
+        summary = f"🟡 Last activity {days_since} days ago."
+        if is_customer:
+            summary += " Customer may need re-engagement."
+        if open_tickets:
+            summary += f" {len(open_tickets)} open ticket(s)."
+        summary += " Schedule a follow-up."
+        return 'at-risk', r, summary
 
     if stale_tickets:
-        return 'at-risk', f"{len(stale_tickets)} ticket(s) stale >7 days"
+        subjects = [t.subject for t in stale_tickets[:3]]
+        r = f"{len(stale_tickets)} ticket(s) stale >7 days"
+        summary = f"🟡 {len(stale_tickets)} ticket(s) stale for >7 days"
+        if subjects: summary += f": {', '.join(subjects)}"
+        summary += " Update or resolve."
+        return 'at-risk', r, summary
 
-    stage = (lifecycle_stage or '').lower()
-    if stage in ('customer', 'closedwon') and not neg and not very_neg:
-        return 'healthy', 'Active customer' if not open_tickets else f"Active, {len(open_tickets)} open ticket(s)"
+    # ─── HEALTHY ───────────────────────────────────────
+    if is_customer and not neg and not very_neg:
+        summary = f"🟢 {company_name or 'Client'} is an active customer"
+        if positive:
+            summary += f" with positive sentiment on {len(positive)} ticket(s)"
+        if not open_tickets:
+            summary += f". No open tickets. All {len(closed_tickets)} ticket(s) resolved."
+        else:
+            summary += f". {len(open_tickets)} open ticket(s) being handled."
+        if days_since < 14:
+            summary += f" Recent activity ({days_since}d ago)."
+        summary += " In good standing."
+        r = 'Active customer' if not open_tickets else f"Active, {len(open_tickets)} open ticket(s)"
+        return 'healthy', r, summary
 
     if days_since < 14:
-        return 'healthy', f"Recent activity ({days_since}d, {contacts_count} contacts)"
+        summary = f"🟢 Recent activity ({days_since}d ago, {contacts_count} contact(s))."
+        if positive:
+            summary += f" {len(positive)} positive ticket(s)."
+        if not open_tickets and closed_tickets:
+            summary += f" All {len(closed_tickets)} ticket(s) resolved."
+        summary += " Engaged and healthy."
+        r = f"Recent activity ({days_since}d, {contacts_count} contacts)"
+        return 'healthy', r, summary
 
-    return 'unknown', 'Insufficient data'
+    # ─── UNKNOWN ───────────────────────────────────────
+    summary = f"⚪ Insufficient data for {company_name or 'this client'}."
+    if contacts_count == 0:
+        summary += " No contacts linked."
+    if days_since >= 999:
+        summary += " No activity history."
+    if not tickets:
+        summary += " No tickets on record."
+    summary += " Add contacts and track interactions to enable health scoring."
+    return 'unknown', 'Insufficient data', summary
