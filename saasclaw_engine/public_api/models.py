@@ -87,3 +87,69 @@ class HubSpotConnection(models.Model):
     def is_expired(self):
         import time as _time
         return _time.time() > self.expires_at - 300
+
+
+class HubspotCompany(models.Model):
+    """Cached HubSpot company record."""
+    project = models.ForeignKey('projects.Project', on_delete=models.CASCADE, related_name='hubspot_companies')
+    hubspot_id = models.CharField(max_length=50, db_index=True)
+    name = models.CharField(max_length=500)
+    domain = models.CharField(max_length=500, blank=True, default='')
+    industry = models.CharField(max_length=500, blank=True, default='')
+    lifecycle_stage = models.CharField(max_length=100, blank=True, default='')
+    last_updated = models.DateTimeField(null=True, blank=True)
+    synced_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('project', 'hubspot_id')
+        ordering = ['name']
+
+    def __str__(self):
+        return f'{self.name} ({self.hubspot_id})'
+
+
+class HubspotContact(models.Model):
+    """Cached HubSpot contact record."""
+    project = models.ForeignKey('projects.Project', on_delete=models.CASCADE, related_name='hubspot_contacts')
+    hubspot_id = models.CharField(max_length=50, db_index=True)
+    first_name = models.CharField(max_length=200, blank=True, default='')
+    last_name = models.CharField(max_length=200, blank=True, default='')
+    email = models.EmailField(blank=True, default='')
+    company_name = models.CharField(max_length=500, blank=True, default='')
+    company = models.ForeignKey(HubspotCompany, on_delete=models.SET_NULL, null=True, blank=True, related_name='contacts')
+    lifecycle_stage = models.CharField(max_length=100, blank=True, default='')
+    last_activity = models.DateTimeField(null=True, blank=True)
+    synced_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('project', 'hubspot_id')
+        ordering = ['last_name', 'first_name']
+
+    def __str__(self):
+        return f'{self.first_name} {self.last_name} ({self.email})'
+
+
+class HubspotTicket(models.Model):
+    """Cached HubSpot ticket record with sentiment."""
+    project = models.ForeignKey('projects.Project', on_delete=models.CASCADE, related_name='hubspot_tickets')
+    hubspot_id = models.CharField(max_length=50, db_index=True)
+    subject = models.CharField(max_length=500)
+    description = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=100, blank=True, default='')
+    pipeline_stage = models.CharField(max_length=50, blank=True, default='')
+    company = models.ForeignKey(HubspotCompany, on_delete=models.SET_NULL, null=True, blank=True, related_name='tickets')
+    sentiment = models.CharField(max_length=20, default='neutral')
+    sentiment_score = models.IntegerField(default=0)
+    sentiment_summary = models.CharField(max_length=500, blank=True, default='')
+    sentiment_flags = models.JSONField(default=list, blank=True)
+    notes = models.JSONField(default=list, blank=True)
+    created_at_hubspot = models.DateTimeField(null=True, blank=True)
+    last_updated_hubspot = models.DateTimeField(null=True, blank=True)
+    synced_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('project', 'hubspot_id')
+        ordering = ['-last_updated_hubspot']
+
+    def __str__(self):
+        return f'{self.subject} ({self.hubspot_id})'
