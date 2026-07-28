@@ -8,6 +8,8 @@ and writes a report. Called via Django management command.
 import json
 import urllib.request
 import re
+import os
+import concurrent.futures
 import logging
 from datetime import datetime, timezone
 
@@ -113,6 +115,93 @@ def _mcp_search(project_slug, object_type, properties=None, limit=100, max_pages
         if not data.get('paging', {}).get('next', {}).get('after'): break
         after = data['paging']['next']['after']
     return all_results
+
+
+PREDATOR_URL = os.environ.get('PREDATOR_URL', 'https://proliant-vllm.criticalpathsecurity.io/v1/chat/completions')
+PREDATOR_MODEL = os.environ.get('PREDATOR_MODEL', 'openai/gpt-oss-20b')
+PREDATOR_CF_ID = os.environ.get('CF_ACCESS_CLIENT_ID', '')
+PREDATOR_CF_SECRET = os.environ.get('CF_ACCESS_CLIENT_SECRET', '')
+
+
+def _llm_summarize_ticket(subject, description, notes, sentiment_label):
+    """Use Predator LLM to generate a concise ticket summary."""
+    notes_text = ' '.join(notes[:5]) if notes else ''
+    ticket_text = f"Subject: {subject}\nDescription: {description}\nNotes: {notes_text}".strip()
+    if len(ticket_text) < 30:
+        return ''  # Not enough text to summarize
+
+    prompt = (
+        "Summarize this support ticket in 1-2 sentences for a client health dashboard. "
+        "Include: what the issue is, emotional tone, and urgency level. "
+        f"VADER sentiment: {sentiment_label}.\n\n{ticket_text}"
+    )
+
+    payload = json.dumps({
+        'model': PREDATOR_MODEL,
+        'messages': [
+            {'role': 'system', 'content': 'You are a concise ticket analyst. Respond with only the summary, no preamble.'},
+            {'role': 'user', 'content': prompt},
+        ],
+        'temperature': 0.3,
+        'max_tokens': 200,
+    }).encode()
+
+    headers = {'Content-Type': 'application/json', 'User-Agent': 'SaaSClaw-HealthChecker/1.0'}
+    if PREDATOR_CF_ID and PREDATOR_CF_SECRET:
+        headers['CF-Access-Client-Id'] = PREDATOR_CF_ID
+        headers['CF-Access-Client-Secret'] = PREDATOR_CF_SECRET
+
+    req = urllib.request.Request(PREDATOR_URL, data=payload, headers=headers, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+            msg = data.get('choices', [{}])[0].get('message', {})
+            # Prefer content (final answer), fall back to reasoning_content if content is null/empty
+            content = msg.get('content')
+            if not content:
+                content = msg.get('reasoning_content') or ''
+            if isinstance(content, list):
+                content = ' '.join(c.get('text', '') for c in content if c.get('type') == 'text')
+            return content.strip()[:1000]
+    except Exception as e:
+        logger.warning(f'LLM summary failed for ticket: {e}')
+        return ''
+
+
+def _summarize_ticket_batch(tickets_data):
+    """Summarize multiple tickets in parallel.
+    tickets_data: list of (ticket_id, subject, description, notes, sentiment_label)
+    Returns: {ticket_id: summary}
+    """
+    results = {}
+    if not tickets_data:
+        return results
+
+    def _worker(item):
+        tid, subject, desc, notes, sentiment = item
+        summary = _llm_summarize_ticket(subject, desc, notes, sentiment)
+        return tid, summary
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(_worker, item) for item in tickets_data]
+        for future in concurrent.futures.as_completed(futures):
+            tid, summary = future.result()
+            if summary:
+                results[tid] = summary
+
+    return results
+
+
+
+    """Fetch ticket→company association for a single ticket."""
+    url = f'https://api.hubapi.com/crm/v4/objects/tickets/{tid}/associations/companies'
+    req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            return str(tid), [r['toObjectId'] for r in data.get('results', [])]
+    except Exception:
+        return str(tid), []
 
 
 def _fetch_association_batch(token, tid):

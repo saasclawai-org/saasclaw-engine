@@ -143,6 +143,7 @@ class HubspotTicket(models.Model):
     sentiment_summary = models.CharField(max_length=500, blank=True, default='')
     sentiment_flags = models.JSONField(default=list, blank=True)
     notes = models.JSONField(default=list, blank=True)
+    ai_summary = models.CharField(max_length=1000, blank=True, default='')
     created_at_hubspot = models.DateTimeField(null=True, blank=True)
     last_updated_hubspot = models.DateTimeField(null=True, blank=True)
     synced_at = models.DateTimeField(auto_now=True)

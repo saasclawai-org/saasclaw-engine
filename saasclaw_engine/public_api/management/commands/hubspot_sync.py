@@ -150,6 +150,35 @@ class Command(BaseCommand):
             ticket_notes = {}
             self.stdout.write(f'  No open changed tickets — skipped association/note fetch entirely')
 
+        # Pre-calculate sentiment for LLM context
+        ticket_sentiments = {}
+        for t in tickets_raw:
+            hs_id = str(t['id'])
+            if hs_id in changed_open_ids:
+                props = t.get('properties', {})
+                notes = ticket_notes.get(hs_id, [])
+                full_text = ' '.join([props.get('subject', ''), props.get('content', ''), *notes])
+                sentiment, sent_score, sent_summary, flags, compound = _vader_sentiment(full_text)
+                ticket_sentiments[hs_id] = (sentiment, sent_score, sent_summary, flags)
+
+        # LLM summaries for open changed tickets (parallel, 5 at a time)
+        from saasclaw_engine.public_api.health_report import _summarize_ticket_batch
+        llm_inputs = []
+        for t in tickets_raw:
+            hs_id = str(t['id'])
+            if hs_id in changed_open_ids:
+                props = t.get('properties', {})
+                notes = ticket_notes.get(hs_id, [])
+                sentiment = ticket_sentiments.get(hs_id, ('neutral', 0, '', []))[0]
+                llm_inputs.append((hs_id, props.get('subject', ''), props.get('content', ''), notes, sentiment))
+
+        if llm_inputs:
+            self.stdout.write(f'  Generating LLM summaries for {len(llm_inputs)} tickets...')
+            ai_summaries = _summarize_ticket_batch(llm_inputs)
+            self.stdout.write(f'  LLM summaries: {len(ai_summaries)} generated')
+        else:
+            ai_summaries = {}
+
         now = datetime.now(timezone.utc)
 
         for t in tickets_raw:
@@ -162,10 +191,9 @@ class Command(BaseCommand):
             updated_str = props.get('hs_lastmodifieddate', '')
 
             if hs_id in changed_open_ids:
-                # Full processing: sentiment + notes + associations
-                notes = ticket_notes.get(hs_id, [])
-                full_text = ' '.join([props.get('subject', ''), props.get('content', ''), *notes])
-                sentiment, sent_score, sent_summary, flags, compound = _vader_sentiment(full_text)
+                # Full processing: sentiment + notes + associations + AI summary
+                sentiment, sent_score, sent_summary, flags = ticket_sentiments.get(hs_id, ('neutral', 0, '', []))
+                ai_summary = ai_summaries.get(hs_id, '')
 
                 company_ids = associations.get(hs_id, [])
                 company = company_id_map.get(str(company_ids[0])) if company_ids else None
@@ -183,6 +211,7 @@ class Command(BaseCommand):
                         'sentiment_summary': sent_summary,
                         'sentiment_flags': flags,
                         'notes': notes,
+                        'ai_summary': ai_summary,
                         'created_at_hubspot': self._parse_dt(created_str),
                         'last_updated_hubspot': self._parse_dt(updated_str),
                     }

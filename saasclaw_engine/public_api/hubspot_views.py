@@ -92,6 +92,7 @@ def hubspot_dashboard_data(request):
                 'sentimentLabel': t.sentiment,
                 'sentimentSummary': t.sentiment_summary,
                 'sentimentFlags': t.sentiment_flags,
+                'aiSummary': t.ai_summary,
                 'link': f'{HS_BASE}/ticket/{t.hubspot_id}',
             } for t in co_tickets],
         })
