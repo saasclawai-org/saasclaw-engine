@@ -205,69 +205,66 @@ def _get_ticket_notes(project_slug, ticket_ids, batch_size=10):
 
 
 def generate_health_report(project_slug='hubspot-health-checker'):
+    """Generate report from synced DB data (runs after hubspot_sync)."""
+    from saasclaw_engine.projects.models import Project
+    from saasclaw_engine.public_api.models import HubspotCompany, HubspotContact, HubspotTicket
+    from saasclaw_engine.public_api.hubspot_views import _calculate_health
+
     now = datetime.now(timezone.utc)
-    contacts = _mcp_search(project_slug, 'contacts', ['firstname','lastname','email','company','lifecyclestage','createdate','hs_lastmodifieddate','lastactivitydate'])
-    companies = _mcp_search(project_slug, 'companies', ['name','domain','industry','lifecyclestage','hs_lastmodifieddate'])
-    tickets_raw = _mcp_search(project_slug, 'tickets', ['subject','content','hs_pipeline_stage','hs_ticket_priority','createdate','hs_lastmodifieddate'])
+    project = Project.objects.get(slug=project_slug)
 
-    ticket_ids = [str(t['id']) for t in tickets_raw]
-    associations = _get_ticket_associations(project_slug, ticket_ids) if ticket_ids else {}
-    ticket_notes = _get_ticket_notes(project_slug, ticket_ids) if ticket_ids else {}
-
-    company_map = {}
-    for co in companies:
-        p = co.get('properties', {})
-        company_map[str(co['id'])] = {'id': str(co['id']),'name': p.get('name',''),'domain': p.get('domain',''),'industry': p.get('industry',''),'lifecycleStage': p.get('lifecyclestage','lead'),'updatedAt': p.get('hs_lastmodifieddate','')}
-    company_by_name = {v['name'].lower(): v for v in company_map.values()}
-
-    processed_tickets = []
-    for t in tickets_raw:
-        p = t.get('properties', {})
-        notes = ticket_notes.get(str(t['id']), [])
-        full_text = ' '.join([p.get('subject',''), p.get('content',''), *notes])
-        sentiment, sent_score, sent_summary, flags, compound = _vader_sentiment(full_text)
-        updated_str = p.get('hs_lastmodifieddate', '')
-        updated_ts = None
-        if updated_str:
-            try: updated_ts = datetime.fromisoformat(updated_str.replace('Z','+00:00'))
-            except Exception: pass
-        processed_tickets.append({
-            'id': str(t['id']),'subject': p.get('subject','(no subject)'),
-            'status': _ticket_status(p.get('hs_pipeline_stage','')),
-            'sentiment': sentiment,'flags': flags,'stale': updated_ts and (now - updated_ts).days > 7,
-        })
-
-    tickets_by_company = {}
-    for tid, cids in associations.items():
-        for cid in cids:
-            tk = next((t for t in processed_tickets if t['id'] == tid), None)
-            if tk: tickets_by_company.setdefault(str(cid), []).append(tk)
-
-    contacts_by_company = {}
-    orphans = []
-    for c in contacts:
-        p = c.get('properties', {})
-        cn = p.get('company', '')
-        if cn:
-            contacts_by_company.setdefault(cn, []).append({'id': str(c['id']),'name': f"{p.get('firstname','')} {p.get('lastname','')}",'email': p.get('email',''),'lastActivity': p.get('lastactivitydate', p.get('hs_lastmodifieddate',''))})
-        else:
-            orphans.append({'name': f"{p.get('firstname','')} {p.get('lastname','')}"})
+    companies = HubspotCompany.objects.filter(project=project).prefetch_related('contacts', 'tickets')
+    orphan_contacts = HubspotContact.objects.filter(project=project, company__isnull=True)
 
     clients = []
-    for cn, co_contacts in contacts_by_company.items():
-        lookup = company_by_name.get(cn.lower())
-        cid = lookup['id'] if lookup else None
-        co_tickets = tickets_by_company.get(cid, []) if cid else []
-        last_activity = lookup['updatedAt'] if lookup else ''
+    processed_tickets = []
+
+    for co in companies:
+        co_contacts = list(co.contacts.all())
+        co_tickets = list(co.tickets.all())
+
+        last_activity = co.last_updated
         for c in co_contacts:
-            if c['lastActivity'] and c['lastActivity'] > last_activity: last_activity = c['lastActivity']
-        try:
-            days_since = (now - datetime.fromisoformat(last_activity.replace('Z','+00:00'))).days if last_activity else 999
-        except Exception:
-            days_since = 999
-        lifecycle = lookup['lifecycleStage'] if lookup else 'lead'
-        status, reason = calculate_health(len(co_contacts), days_since, lifecycle, co_tickets)
-        clients.append({'name': lookup['name'] if lookup else cn,'id': cid,'status': status,'reason': reason,'days_since': days_since,'tickets': co_tickets,'link': f"{HS_BASE}/company/{cid}" if cid else ''})
+            if c.last_activity and (not last_activity or c.last_activity > last_activity):
+                last_activity = c.last_activity
+
+        days_since = 999
+        if last_activity:
+            la = last_activity
+            if la.tzinfo is None:
+                from django.utils import timezone as djtz
+                la = djtz.make_aware(la, djtz.utc)
+            days_since = (now - la).days
+
+        status, reason, summary = _calculate_health(
+            len(co_contacts), days_since, co.lifecycle_stage, co_tickets, co.name, co.industry
+        )
+
+        ticket_data = []
+        for t in co_tickets:
+            ticket_data.append({
+                'id': t.hubspot_id,
+                'subject': t.subject,
+                'status': t.status,
+                'sentiment': t.sentiment,
+                'flags': t.sentiment_flags or [],
+                'stale': t.last_updated_hubspot and (
+                    (now - (t.last_updated_hubspot.replace(tzinfo=timezone.utc) if t.last_updated_hubspot.tzinfo is None
+                     else t.last_updated_hubspot)).days > 7
+                ),
+            })
+            processed_tickets.append(ticket_data[-1])
+
+        clients.append({
+            'name': co.name,
+            'id': co.hubspot_id,
+            'status': status,
+            'reason': reason,
+            'summary': summary,
+            'days_since': days_since,
+            'tickets': ticket_data,
+            'link': f"{HS_BASE}/company/{co.hubspot_id}",
+        })
 
     status_order = {'critical': 0, 'at-risk': 1, 'unknown': 2, 'healthy': 3}
     clients.sort(key=lambda c: (status_order.get(c['status'], 2), c['name']))
@@ -276,12 +273,18 @@ def generate_health_report(project_slug='hubspot-health-checker'):
         'critical': sum(1 for c in clients if c['status'] == 'critical'),
         'at_risk': sum(1 for c in clients if c['status'] == 'at-risk'),
         'healthy': sum(1 for c in clients if c['status'] == 'healthy'),
-        'total_clients': len(clients), 'total_contacts': len(contacts),
+        'total_clients': len(clients),
+        'total_contacts': HubspotContact.objects.filter(project=project).count(),
         'open_tickets': sum(1 for t in processed_tickets if t['status'] != 'Closed'),
-        'negative_tickets': sum(1 for t in processed_tickets if t['sentiment'] in ('negative','very-negative')),
-        'orphans': len(orphans),
+        'negative_tickets': sum(1 for t in processed_tickets if t['sentiment'] in ('negative', 'very-negative')),
+        'orphans': orphan_contacts.count(),
     }
-    return {'generated_at': now.isoformat(), 'summary': summary, 'clients': clients, 'orphan_contacts': orphans}
+    return {
+        'generated_at': now.isoformat(),
+        'summary': summary,
+        'clients': clients,
+        'orphan_contacts': [{'name': f'{c.first_name} {c.last_name}'} for c in orphan_contacts],
+    }
 
 
 def format_report_telegram(report):
@@ -298,6 +301,10 @@ def format_report_telegram(report):
         emoji = {'critical': '🔴', 'at-risk': '🟡', 'healthy': '🟢', 'unknown': '⚪'}.get(c['status'], '⚪')
         lines.append(f"{emoji} <b>{c['name']}</b>")
         lines.append(f"   {c['reason']}")
+        if c.get('summary'):
+            # Strip emoji prefix from summary if present, keep it concise
+            s = c['summary']
+            lines.append(f"   <i>{s[:200]}</i>")
         neg = [t for t in c.get('tickets',[]) if t.get('sentiment') in ('negative','very-negative')]
         if neg:
             lines.append(f"   😡 {len(neg)} negative: {', '.join(t['subject'] for t in neg[:3])}")
