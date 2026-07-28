@@ -1,0 +1,268 @@
+"""
+HubSpot Health Report — Nightly batch job.
+
+Fetches all companies, contacts, tickets, notes from HubSpot MCP,
+runs VADER sentiment analysis on ticket text, calculates health scores,
+and writes a report. Called via Django management command.
+"""
+import json
+import urllib.request
+import re
+import logging
+from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
+
+HUBSPOT_PORTAL = '51524447'
+HS_BASE = f'https://app.hubspot.com/contacts/{HUBSPOT_PORTAL}'
+
+_analyzer = None
+
+def _get_analyzer():
+    global _analyzer
+    if _analyzer is None:
+        from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+        _analyzer = SentimentIntensityAnalyzer()
+    return _analyzer
+
+
+def _vader_sentiment(text):
+    analyzer = _get_analyzer()
+    scores = analyzer.polarity_scores(text)
+    compound = scores['compound']
+    if compound <= -0.5:
+        sentiment, score = 'very-negative', 8
+    elif compound < -0.15:
+        sentiment, score = 'negative', 4
+    elif compound >= 0.4:
+        sentiment, score = 'positive', -2
+    else:
+        sentiment, score = 'neutral', 0
+    flags = []
+    for w in ['upset','angry','furious','frustrated','unacceptable','broken','cannot','unable','fails','failed','cancel','leaving','leave','wrong','worst','terrible','horrible','awful','useless','unhappy','disappointed','complaint','urgent','escalate']:
+        if w in text.lower():
+            flags.append(w)
+    if sentiment in ('very-negative', 'negative'):
+        summary = f'Negative — {", ".join(flags[:3])}' if flags else 'Negative tone'
+    elif sentiment == 'positive':
+        summary = 'Positive tone'
+    else:
+        summary = 'Neutral tone'
+    return sentiment, score, summary, flags, round(compound, 3)
+
+
+TICKET_STAGES = {'1': 'New', '2': 'In Progress', '3': 'Waiting on Us', '4': 'Closed', '5': 'Waiting on Customer'}
+
+def _ticket_status(stage_id):
+    return TICKET_STAGES.get(str(stage_id), f'Stage {stage_id}')
+
+
+def calculate_health(contacts_count, days_since, lifecycle_stage, tickets):
+    open_tickets = [t for t in tickets if t['status'] != 'Closed']
+    stale_tickets = [t for t in open_tickets if t.get('stale', False)]
+    waiting = [t for t in open_tickets if 'waiting' in t.get('status','').lower() or 'progress' in t.get('status','').lower()]
+    very_neg = [t for t in open_tickets if t.get('sentiment') == 'very-negative']
+    if very_neg:
+        flags = list(set(f for t in very_neg for f in t.get('flags', [])))
+        r = f"{len(very_neg)} ticket(s) strong negative"
+        if flags: r += f" — {', '.join(flags[:4])}"
+        return 'critical', r
+    if stale_tickets and waiting:
+        return 'critical', f"{len(stale_tickets)} ticket(s) waiting on us >7 days"
+    neg = [t for t in open_tickets if t.get('sentiment') == 'negative']
+    if neg:
+        if days_since >= 30:
+            return 'critical', f"{len(neg)} negative ticket(s), no activity {days_since}d"
+        return 'at-risk', f"{len(neg)} ticket(s) negative sentiment"
+    if len(open_tickets) >= 3:
+        return 'at-risk', f"{len(open_tickets)} open tickets — high load"
+    if days_since >= 60:
+        r = f"No activity {days_since} days — may be churning"
+        if open_tickets: r += f", {len(open_tickets)} open"
+        return 'critical', r
+    if days_since >= 30:
+        r = f"Last activity {days_since} days ago — needs follow-up"
+        if open_tickets: r += f", {len(open_tickets)} open"
+        return 'at-risk', r
+    if stale_tickets:
+        return 'at-risk', f"{len(stale_tickets)} ticket(s) stale >7 days"
+    stage = (lifecycle_stage or '').lower()
+    if stage in ('customer','closedwon') and not neg and not very_neg:
+        return 'healthy', 'Active customer' if not open_tickets else f"Active, {len(open_tickets)} open ticket(s)"
+    if days_since < 14:
+        return 'healthy', f"Recent activity ({days_since}d, {contacts_count} contacts)"
+    return 'unknown', 'Insufficient data'
+
+
+def _mcp_search(project_slug, object_type, properties=None, limit=100, max_pages=10):
+    from .models import HubSpotConnection
+    from .hubspot_mcp import _refresh_token_if_needed, _mcp_call_tool
+    from saasclaw_engine.projects.models import Project
+    project = Project.objects.get(slug=project_slug)
+    conn = HubSpotConnection.objects.get(project=project)
+    token = _refresh_token_if_needed(conn)
+    all_results = []
+    after = ''
+    for _ in range(max_pages):
+        args = {'objectType': object_type, 'limit': limit}
+        if properties: args['properties'] = properties
+        if after: args['after'] = after
+        result = _mcp_call_tool(token, 'search_crm_objects', args)
+        data = json.loads(result.get('result', result).get('content', [{}])[0].get('text', '{"results":[]}'))
+        all_results.extend(data.get('results', []))
+        if not data.get('paging', {}).get('next', {}).get('after'): break
+        after = data['paging']['next']['after']
+    return all_results
+
+
+def _get_ticket_associations(project_slug, ticket_ids):
+    from .models import HubSpotConnection
+    from .hubspot_mcp import _refresh_token_if_needed
+    from saasclaw_engine.projects.models import Project
+    project = Project.objects.get(slug=project_slug)
+    conn = HubSpotConnection.objects.get(project=project)
+    token = _refresh_token_if_needed(conn)
+    result = {}
+    for tid in ticket_ids:
+        url = f'https://api.hubapi.com/crm/v4/objects/tickets/{tid}/associations/companies'
+        req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+                result[str(tid)] = [r['toObjectId'] for r in data.get('results', [])]
+        except Exception:
+            result[str(tid)] = []
+    return result
+
+
+def _get_ticket_notes(project_slug, ticket_ids):
+    from .models import HubSpotConnection
+    from .hubspot_mcp import _refresh_token_if_needed
+    from saasclaw_engine.projects.models import Project
+    project = Project.objects.get(slug=project_slug)
+    conn = HubSpotConnection.objects.get(project=project)
+    token = _refresh_token_if_needed(conn)
+    result = {}
+    for tid in ticket_ids:
+        url = f'https://api.hubapi.com/crm/v4/objects/tickets/{tid}/associations/notes'
+        req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+                bodies = []
+                for nid in [r['toObjectId'] for r in data.get('results', [])]:
+                    nurl = f'https://api.hubapi.com/crm/v3/objects/notes/{nid}?properties=hs_note_body'
+                    nreq = urllib.request.Request(nurl, headers={'Authorization': f'Bearer {token}'})
+                    try:
+                        with urllib.request.urlopen(nreq, timeout=10) as nresp:
+                            nd = json.loads(nresp.read())
+                            clean = re.sub('<[^<]+?>', '', nd.get('properties',{}).get('hs_note_body','')).strip()
+                            if clean: bodies.append(clean)
+                    except Exception: pass
+                result[str(tid)] = bodies
+        except Exception:
+            result[str(tid)] = []
+    return result
+
+
+def generate_health_report(project_slug='hubspot-health-checker'):
+    now = datetime.now(timezone.utc)
+    contacts = _mcp_search(project_slug, 'contacts', ['firstname','lastname','email','company','lifecyclestage','createdate','hs_lastmodifieddate','lastactivitydate'])
+    companies = _mcp_search(project_slug, 'companies', ['name','domain','industry','lifecyclestage','hs_lastmodifieddate'])
+    tickets_raw = _mcp_search(project_slug, 'tickets', ['subject','content','hs_pipeline_stage','hs_ticket_priority','createdate','hs_lastmodifieddate'])
+
+    ticket_ids = [str(t['id']) for t in tickets_raw]
+    associations = _get_ticket_associations(project_slug, ticket_ids) if ticket_ids else {}
+    ticket_notes = _get_ticket_notes(project_slug, ticket_ids) if ticket_ids else {}
+
+    company_map = {}
+    for co in companies:
+        p = co.get('properties', {})
+        company_map[str(co['id'])] = {'id': str(co['id']),'name': p.get('name',''),'domain': p.get('domain',''),'industry': p.get('industry',''),'lifecycleStage': p.get('lifecyclestage','lead'),'updatedAt': p.get('hs_lastmodifieddate','')}
+    company_by_name = {v['name'].lower(): v for v in company_map.values()}
+
+    processed_tickets = []
+    for t in tickets_raw:
+        p = t.get('properties', {})
+        notes = ticket_notes.get(str(t['id']), [])
+        full_text = ' '.join([p.get('subject',''), p.get('content',''), *notes])
+        sentiment, sent_score, sent_summary, flags, compound = _vader_sentiment(full_text)
+        updated_str = p.get('hs_lastmodifieddate', '')
+        updated_ts = None
+        if updated_str:
+            try: updated_ts = datetime.fromisoformat(updated_str.replace('Z','+00:00'))
+            except Exception: pass
+        processed_tickets.append({
+            'id': str(t['id']),'subject': p.get('subject','(no subject)'),
+            'status': _ticket_status(p.get('hs_pipeline_stage','')),
+            'sentiment': sentiment,'flags': flags,'stale': updated_ts and (now - updated_ts).days > 7,
+        })
+
+    tickets_by_company = {}
+    for tid, cids in associations.items():
+        for cid in cids:
+            tk = next((t for t in processed_tickets if t['id'] == tid), None)
+            if tk: tickets_by_company.setdefault(str(cid), []).append(tk)
+
+    contacts_by_company = {}
+    orphans = []
+    for c in contacts:
+        p = c.get('properties', {})
+        cn = p.get('company', '')
+        if cn:
+            contacts_by_company.setdefault(cn, []).append({'id': str(c['id']),'name': f"{p.get('firstname','')} {p.get('lastname','')}",'email': p.get('email',''),'lastActivity': p.get('lastactivitydate', p.get('hs_lastmodifieddate',''))})
+        else:
+            orphans.append({'name': f"{p.get('firstname','')} {p.get('lastname','')}"})
+
+    clients = []
+    for cn, co_contacts in contacts_by_company.items():
+        lookup = company_by_name.get(cn.lower())
+        cid = lookup['id'] if lookup else None
+        co_tickets = tickets_by_company.get(cid, []) if cid else []
+        last_activity = lookup['updatedAt'] if lookup else ''
+        for c in co_contacts:
+            if c['lastActivity'] and c['lastActivity'] > last_activity: last_activity = c['lastActivity']
+        try:
+            days_since = (now - datetime.fromisoformat(last_activity.replace('Z','+00:00'))).days if last_activity else 999
+        except Exception:
+            days_since = 999
+        lifecycle = lookup['lifecycleStage'] if lookup else 'lead'
+        status, reason = calculate_health(len(co_contacts), days_since, lifecycle, co_tickets)
+        clients.append({'name': lookup['name'] if lookup else cn,'id': cid,'status': status,'reason': reason,'days_since': days_since,'tickets': co_tickets,'link': f"{HS_BASE}/company/{cid}" if cid else ''})
+
+    status_order = {'critical': 0, 'at-risk': 1, 'unknown': 2, 'healthy': 3}
+    clients.sort(key=lambda c: (status_order.get(c['status'], 2), c['name']))
+
+    summary = {
+        'critical': sum(1 for c in clients if c['status'] == 'critical'),
+        'at_risk': sum(1 for c in clients if c['status'] == 'at-risk'),
+        'healthy': sum(1 for c in clients if c['status'] == 'healthy'),
+        'total_clients': len(clients), 'total_contacts': len(contacts),
+        'open_tickets': sum(1 for t in processed_tickets if t['status'] != 'Closed'),
+        'negative_tickets': sum(1 for t in processed_tickets if t['sentiment'] in ('negative','very-negative')),
+        'orphans': len(orphans),
+    }
+    return {'generated_at': now.isoformat(), 'summary': summary, 'clients': clients, 'orphan_contacts': orphans}
+
+
+def format_report_telegram(report):
+    s = report['summary']
+    lines = [
+        "📊 <b>Daily Health Report</b>",
+        f"🕐 {report['generated_at'][:16]} UTC",
+        "",
+        f"🏢 {s['total_clients']} clients | 👥 {s['total_contacts']} contacts | 🎫 {s['open_tickets']} open tickets",
+        f"🔴 {s['critical']} critical | 🟡 {s['at_risk']} at-risk | 🟢 {s['healthy']} healthy",
+        "",
+    ]
+    for c in report['clients']:
+        emoji = {'critical': '🔴', 'at-risk': '🟡', 'healthy': '🟢', 'unknown': '⚪'}.get(c['status'], '⚪')
+        lines.append(f"{emoji} <b>{c['name']}</b>")
+        lines.append(f"   {c['reason']}")
+        neg = [t for t in c.get('tickets',[]) if t.get('sentiment') in ('negative','very-negative')]
+        if neg:
+            lines.append(f"   😡 {len(neg)} negative: {', '.join(t['subject'] for t in neg[:3])}")
+        lines.append("")
+    if report['orphan_contacts']:
+        lines.append(f"👤 {len(report['orphan_contacts'])} contact(s) without company")
+    return '\n'.join(lines)
