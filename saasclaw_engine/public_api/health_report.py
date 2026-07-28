@@ -10,6 +10,7 @@ import urllib.request
 import re
 import os
 import concurrent.futures
+import socket
 import logging
 from datetime import datetime, timezone
 
@@ -117,8 +118,8 @@ def _mcp_search(project_slug, object_type, properties=None, limit=100, max_pages
     return all_results
 
 
-PREDATOR_URL = os.environ.get('PREDATOR_URL', 'https://proliant-vllm.criticalpathsecurity.io/v1/chat/completions')
-PREDATOR_MODEL = os.environ.get('PREDATOR_MODEL', 'openai/gpt-oss-20b')
+PREDATOR_URL = os.environ.get('PREDATOR_URL', 'https://proliant-ollama.criticalpathsecurity.io/v1/chat/completions')
+PREDATOR_MODEL = os.environ.get('PREDATOR_MODEL', 'ornith:35b')
 PREDATOR_CF_ID = os.environ.get('CF_ACCESS_CLIENT_ID', '')
 PREDATOR_CF_SECRET = os.environ.get('CF_ACCESS_CLIENT_SECRET', '')
 
@@ -143,7 +144,7 @@ def _llm_summarize_ticket(subject, description, notes, sentiment_label):
             {'role': 'user', 'content': prompt},
         ],
         'temperature': 0.3,
-        'max_tokens': 200,
+        'max_tokens': 1000,
     }).encode()
 
     headers = {'Content-Type': 'application/json', 'User-Agent': 'SaaSClaw-HealthChecker/1.0'}
@@ -153,7 +154,7 @@ def _llm_summarize_ticket(subject, description, notes, sentiment_label):
 
     req = urllib.request.Request(PREDATOR_URL, data=payload, headers=headers, method='POST')
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=180) as resp:
             data = json.loads(resp.read())
             msg = data.get('choices', [{}])[0].get('message', {})
             # Prefer content (final answer), fall back to reasoning_content if content is null/empty
@@ -182,7 +183,7 @@ def _summarize_ticket_batch(tickets_data):
         summary = _llm_summarize_ticket(subject, desc, notes, sentiment)
         return tid, summary
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(_worker, item) for item in tickets_data]
         for future in concurrent.futures.as_completed(futures):
             tid, summary = future.result()
