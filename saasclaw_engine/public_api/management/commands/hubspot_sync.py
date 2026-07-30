@@ -19,7 +19,21 @@ from django.core.management.base import BaseCommand
 
 logger = logging.getLogger(__name__)
 
+# Default fallback stages (HubSpot default pipeline)
 TICKET_STAGES = {'1': 'New', '2': 'In Progress', '3': 'Waiting on Us', '4': 'Closed', '5': 'Waiting on Customer'}
+
+# Known custom pipeline stages (fetched dynamically if possible)
+CUSTOM_PIPELINE_STAGES = {'1409281604': 'In Progress', '1409281607': 'Closed'}
+
+
+def _resolve_stage(stage_id):
+    """Map a pipeline stage ID to a human-readable label."""
+    sid = str(stage_id)
+    if sid in TICKET_STAGES:
+        return TICKET_STAGES[sid]
+    if sid in CUSTOM_PIPELINE_STAGES:
+        return CUSTOM_PIPELINE_STAGES[sid]
+    return f'Stage {stage_id}'
 
 
 class Command(BaseCommand):
@@ -120,7 +134,7 @@ class Command(BaseCommand):
             updated_str = props.get('hs_lastmodifieddate', '')
             hs_updated = self._parse_dt(updated_str)
             stage = props.get('hs_pipeline_stage', '')
-            status = TICKET_STAGES.get(str(stage), f'Stage {stage}')
+            status = _resolve_stage(stage)
 
             # Skip closed tickets — no need for associations, notes, or sentiment
             if status == 'Closed':
@@ -186,7 +200,7 @@ class Command(BaseCommand):
             hs_id = str(t['id'])
 
             stage = props.get('hs_pipeline_stage', '')
-            status = TICKET_STAGES.get(str(stage), f'Stage {stage}')
+            status = _resolve_stage(stage)
             created_str = props.get('createdate', '')
             updated_str = props.get('hs_lastmodifieddate', '')
 

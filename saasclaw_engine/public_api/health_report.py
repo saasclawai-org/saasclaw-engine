@@ -95,7 +95,7 @@ def _vader_sentiment(text):
     return sentiment, score, summary, flags, round(compound, 3)
 
 
-TICKET_STAGES = {'1': 'New', '2': 'In Progress', '3': 'Waiting on Us', '4': 'Closed', '5': 'Waiting on Customer'}
+TICKET_STAGES = {'1': 'New', '2': 'In Progress', '3': 'Waiting on Us', '4': 'Closed', '5': 'Waiting on Customer', '1409281604': 'In Progress', '1409281607': 'Closed'}
 
 def _ticket_status(stage_id):
     return TICKET_STAGES.get(str(stage_id), f'Stage {stage_id}')
