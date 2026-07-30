@@ -16,6 +16,8 @@ INSTALLED_APPS = [
     'saasclaw_engine.agents',
     'saasclaw_engine.integrations',
     'saasclaw_engine.deployments',
+    'saasclaw_engine.agent',
+    'saasclaw_engine.public_api',
 ]
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 USE_TZ = True
@@ -29,3 +31,18 @@ PROJECT_APPROVAL_REQUIRED = False
 GITHUB_APP_ID = 12345
 GITHUB_APP_PRIVATE_KEY = 'dummy-key'
 GITHUB_WEBHOOK_SECRET = 'test-webhook-secret'
+
+# DRF settings for API tests
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME_HOURS': 1,
+    'REFRESH_TOKEN_LIFETIME_DAYS': 1,
+}
