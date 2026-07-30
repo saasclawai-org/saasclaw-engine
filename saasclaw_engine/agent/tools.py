@@ -1493,6 +1493,157 @@ def _figma_get_tokens_tool(workspace_path: str, url: str, session_id: str | None
     return _figma_get_frame_tool(workspace_path, url, session_id)
 
 
+def _security_scan_tool(workspace_path: str, scope: str = "full", session_id: str | None = None) -> str:
+    """Run an attacker-first security audit using VulnHunter methodology.
+    
+    Returns phased instructions for the wizard to follow using its existing
+    tools (list_files, read_file, run_command for grep). The wizard IS the scanner.
+    """
+    if scope == "quick":
+        return _quick_scan_instructions()
+    return _full_scan_instructions(scope)
+
+
+def _quick_scan_instructions() -> str:
+    """Quick scan: grep for high-risk sink patterns only."""
+    return r"""🔒 QUICK SECURITY SCAN
+
+Run these grep commands to check for common vulnerability patterns:
+
+1. **SQL Injection** — Search for raw SQL with string concatenation:
+   - `grep -rn "execute.*SELECT.*{" --include="*.py" --include="*.js" --include="*.ts" --include="*.java" --include="*.cs" . | grep -v node_modules | grep -v __pycache__`
+   - `grep -rn "query.*f'" --include="*.py" . | grep -v __pycache__`
+   - `grep -rn "raw.*SELECT" --include="*.py" --include="*.js" --include="*.ts" . | grep -v node_modules`
+
+2. **XSS** — Search for dangerouslySetInnerHTML / v-html / innerHTML:
+   - `grep -rn "dangerouslySetInnerHTML\|innerHTML\|v-html" --include="*.jsx" --include="*.tsx" --include="*.vue" --include="*.js" --include="*.ts" . | grep -v node_modules`
+
+3. **Hardcoded Secrets** — Search for API keys, passwords, tokens:
+   - `grep -rn "sk-[a-zA-Z0-9]\{20,\}\|password.*=.*['\"]\|secret.*=.*['\"]\|api_key.*=.*['\"]\|token.*=.*['\"]" --include="*.py" --include="*.js" --include="*.ts" --include="*.java" --include="*.cs" . | grep -v node_modules | grep -v __pycache__ | grep -v ".env.example"`
+
+4. **Permissive CORS** — Search for wildcard origins:
+   - `grep -rn "Access-Control-Allow-Origin.*\*\|CORS.*true\|origin.*true\|allow.all" --include="*.py" --include="*.js" --include="*.ts" --include="*.cs" --include="*.java" . | grep -v node_modules`
+
+5. **Path Traversal** — Search for file operations with user input:
+   - `grep -rn "open.*req\.\|readFile.*req\.\|writeFile.*req\." --include="*.py" --include="*.js" --include="*.ts" . | grep -v node_modules`
+
+6. **Command Injection** — Search for exec/spawn with user input:
+   - `grep -rn "exec.*req\.\|spawn.*req\.\|subprocess.*req\." --include="*.py" --include="*.js" --include="*.ts" . | grep -v node_modules`
+
+For EACH result found:
+- Read the file to understand the context
+- Determine if user-controlled input actually reaches the sink
+- Report: SEVERITY (Critical/High/Medium/Low), file:line, description, and suggested fix
+- If no results found for a category, report "✅ No issues found"
+
+Summarize findings as a table with columns: Severity | Category | File | Line | Issue | Fix
+"""
+
+
+def _full_scan_instructions(scope: str) -> str:
+    """Full scan: VulnHunter-style phased attacker-first analysis."""
+    scope_desc = {
+        "full": "the ENTIRE codebase",
+        "recent_changes": "only files changed since the last commit (use: git diff --name-only HEAD~1)"
+    }.get(scope, "the entire codebase")
+    
+    return f"""🔒 SECURITY AUDIT — Attacker-First Vulnerability Analysis
+
+You are now operating as a security auditor. Your goal is to find REAL, EXPLOITABLE vulnerabilities by thinking like an attacker. Follow these phases strictly.
+
+**SCOPE**: Scan {scope_desc}
+**EXCLUDE**: node_modules/, __pycache__/, .git/, dist/, build/, *.test.*, *_test.*, test_*, vendor/, third_party/, *.md, *.txt
+
+════════════════════════════════════════════════════════
+PHASE 1: RECONNAISSANCE — Map the Attack Surface
+════════════════════════════════════════════════════════
+
+Step 1: Discover all production source files
+- Run: `find . -type f \\( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.tsx" -o -name "*.jsx" -o -name "*.java" -o -name "*.cs" -o -name "*.go" -o -name "*.kt" -o -name "*.rs" \\) | grep -v node_modules | grep -v __pycache__ | grep -v dist | grep -v build | grep -v test | grep -v vendor | head -100`
+- Note: languages, frameworks, module structure
+
+Step 2: Enumerate ENTRY POINTS (attacker-accessible inputs)
+Grep for ALL input sources adapted to the detected framework:
+- **HTTP**: `req.params`, `req.query`, `req.body`, `req.headers`, `request.GET`, `request.POST`, `@RequestParam`, `@PathVariable`, `@RequestBody`, `r.URL.Query()`
+- **API**: route handlers, controller methods, endpoint definitions
+- **File uploads**: multipart, base64, file input handlers
+- **External messages**: webhook handlers, queue consumers
+
+Step 3: Enumerate DANGEROUS SINKS
+Grep for ALL dangerous patterns:
+- **SQL**: `execute(`, `query(`, `raw(`, `.sql`, `cursor.execute`
+- **Command exec**: `exec(`, `spawn(`, `subprocess`, `os.system`, `child_process`
+- **HTML/render**: `innerHTML`, `dangerouslySetInnerHTML`, `v-html`, `render_template_string`, `eval(`
+- **File ops**: `open(`, `readFile`, `writeFile`, `fs.`, `os.remove`, `shutil`
+- **Redirects**: `redirect(`, `res.redirect`, `Location:`
+- **Deserialization**: `pickle.loads`, `yaml.load`, `JSON.parse` (of external input)
+- **Crypto**: `md5(`, `sha1(`, `random` (not `secrets`), `ECB`
+
+════════════════════════════════════════════════════════
+PHASE 2: HUNT — Trace Inputs to Sinks (Forward Analysis)
+════════════════════════════════════════════════════════
+
+For each entry point from Phase 1, trace data FORWARD:
+
+1. Read the entry point handler. Find every use of the input variable.
+2. For each function the input passes to, read that function. Follow it across files.
+3. NEVER stop at abstraction boundaries — trace into every dispatch target.
+4. Exhaust ALL code paths — an input used 3 places needs 3 traces.
+5. If input reaches a sink WITHOUT sanitization, that's a candidate finding.
+
+Key patterns to look for:
+- **SQL Injection**: User input concatenated into SQL queries (not parameterized)
+- **XSS**: User input rendered in HTML without escaping
+- **Path Traversal**: User input in file paths without validation
+- **SSRF**: User input in outbound HTTP URLs
+- **Command Injection**: User input in shell commands
+- **Authentication Bypass**: Missing auth checks on endpoints
+- **Authorization (IDOR)**: User can access other users' data by changing IDs
+- **Open Redirect**: User input in redirect URLs
+- **Insecure Deserialization**: Untrusted data into pickle/yaml/eval
+- **Hardcoded Secrets**: API keys, passwords, tokens in source code
+- **Permissive CORS**: Wildcard origins in production
+- **Weak Crypto**: MD5/SHA1 for passwords, ECB mode, predictable tokens
+
+════════════════════════════════════════════════════════
+PHASE 3: DISPROVE — Adversarial Falsification
+════════════════════════════════════════════════════════
+
+For each candidate finding from Phase 2, try to PROVE IT'S NOT EXPLOITABLE:
+- Is there input validation we missed? (Read the FULL validation logic)
+- Is there a security middleware that blocks this? (CORS, CSRF, auth)
+- Does a guard clause prevent the input from reaching the sink?
+- Is the "user input" actually hardcoded or from a trusted source?
+- Does the framework auto-escape this context? (e.g., React JSX auto-escapes)
+
+If you can prove it's NOT exploitable → discard it. Only report findings that survive.
+Goal: eliminate ~50% of candidates as false positives.
+
+════════════════════════════════════════════════════════
+PHASE 4: REPORT — Compile Findings
+════════════════════════════════════════════════════════
+
+Format each confirmed finding as:
+
+🔴 **[SEVERITY]** [CATEGORY]
+📍 **Location**: `file/path.ext:line_number`
+🎯 **Entry Point**: Where the attacker enters (e.g., `POST /api/users`)
+📊 **Data Flow**: Entry point → function1() → function2() → SINK
+💥 **Impact**: What an attacker gains (e.g., "Read all database tables")
+✅ **Fix**: Specific code change to eliminate the vulnerability class
+
+Severity levels:
+- 🔴 CRITICAL: Remote code execution, SQL injection, auth bypass
+- 🟠 HIGH: XSS, path traversal, SSRF, hardcoded production secrets
+- 🟡 MEDIUM: Open redirect, weak crypto, permissive CORS, missing rate limits
+- 🔵 LOW: Information disclosure, verbose errors, missing security headers
+
+If no vulnerabilities are found, report: "✅ No exploitable vulnerabilities found in {scope_desc}."
+
+After reporting, provide a PRIORITIZED fix list ordered by severity.
+"""
+
+
 def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = False, session_id: str | None = None) -> str:
     """Dispatch a tool call by name.
     
@@ -1536,6 +1687,7 @@ def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = 
         "supabase_sql": lambda: supabase_sql(workspace_path, args.get("sql", "")),
         "figma_get_frame": lambda: _figma_get_frame_tool(workspace_path, args.get("url", ""), session_id=session_id),
         "figma_get_design_tokens": lambda: _figma_get_tokens_tool(workspace_path, args.get("url", ""), session_id=session_id),
+        "security_scan": lambda: _security_scan_tool(workspace_path, args.get("scope", "full"), session_id=session_id),
     }
     handler = handlers.get(name)
     if not handler:

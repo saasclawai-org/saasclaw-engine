@@ -6,6 +6,7 @@ from . import views
 from .api_key_views import api_keys_list_create, api_key_revoke, api_key_delete
 from .hubspot_mcp import hubspot_oauth_start, hubspot_oauth_callback, hubspot_mcp_call, hubspot_chatlog
 from .hubspot_views import hubspot_dashboard_data, hubspot_topic_graph, hubspot_sync_status, hubspot_sync_trigger
+from .security_views import list_security_scans, security_scan_detail, trigger_security_scan
 
 urlpatterns = [
     # Auth
@@ -71,4 +72,9 @@ urlpatterns = [
     path('hubspot/topics/', csrf_exempt(hubspot_topic_graph), name='hubspot-topics'),
     path('hubspot/sync-status/', csrf_exempt(hubspot_sync_status), name='hubspot-sync-status'),
     path('hubspot/sync/', csrf_exempt(hubspot_sync_trigger), name='hubspot-sync'),
+
+    # Security Scans
+    path('projects/<str:slug>/security/scans/', csrf_exempt(list_security_scans), name='security-scans-list'),
+    path('projects/<str:slug>/security/scans/<int:scan_id>/', csrf_exempt(security_scan_detail), name='security-scan-detail'),
+    path('projects/<str:slug>/security/scan/', csrf_exempt(trigger_security_scan), name='security-scan-trigger'),
 ]

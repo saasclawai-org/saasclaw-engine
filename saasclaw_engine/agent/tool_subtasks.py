@@ -601,6 +601,24 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "security_scan",
+            "description": "Run an attacker-first security audit on the project source code. Enumerates entry points, traces data flows to dangerous sinks (SQL injection, XSS, command injection, path traversal, SSRF, hardcoded secrets), falsifies weak candidates, and reports confirmed vulnerabilities with exploit paths and fixes. Use when user asks to check security, find vulnerabilities, audit code, or harden the app.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scope": {
+                        "type": "string",
+                        "enum": ["full", "quick", "recent_changes"],
+                        "description": "full = entire codebase (thorough 4-phase audit), quick = fast grep for common patterns only, recent_changes = only files changed since last commit",
+                        "default": "quick",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
