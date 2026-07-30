@@ -273,6 +273,13 @@ class Command(BaseCommand):
         if deleted_co or deleted_ct or deleted_tk:
             self.stdout.write(f'  Pruned: {deleted_co} companies, {deleted_ct} contacts, {deleted_tk} tickets (deleted in HubSpot)')
 
+        # ─── Build topic graph ───────────────────────────
+        from saasclaw_engine.public_api.topic_graph import build_topic_graph
+        topic_stats = build_topic_graph(project)
+        self.stdout.write(f'  Topic graph: {topic_stats["topics_created"]} topics from {topic_stats["tickets_classified"]} tickets')
+        for tname, cnt in topic_stats.get('topics', {}).items():
+            self.stdout.write(f'    {tname}: {cnt} tickets')
+
         self.stdout.write(self.style.SUCCESS('Sync complete'))
 
     def _parse_dt(self, dt_str):

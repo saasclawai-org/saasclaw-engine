@@ -5,7 +5,7 @@ from django.views.decorators.csrf import csrf_exempt
 from . import views
 from .api_key_views import api_keys_list_create, api_key_revoke, api_key_delete
 from .hubspot_mcp import hubspot_oauth_start, hubspot_oauth_callback, hubspot_mcp_call, hubspot_chatlog
-from .hubspot_views import hubspot_dashboard_data
+from .hubspot_views import hubspot_dashboard_data, hubspot_topic_graph, hubspot_sync_status, hubspot_sync_trigger
 
 urlpatterns = [
     # Auth
@@ -68,4 +68,7 @@ urlpatterns = [
     path('hubspot/mcp/call/', csrf_exempt(hubspot_mcp_call), name='hubspot-mcp-call'),
     path('hubspot/chatlog/', csrf_exempt(hubspot_chatlog), name='hubspot-chatlog'),
     path('hubspot/dashboard/', csrf_exempt(hubspot_dashboard_data), name='hubspot-dashboard'),
+    path('hubspot/topics/', csrf_exempt(hubspot_topic_graph), name='hubspot-topics'),
+    path('hubspot/sync-status/', csrf_exempt(hubspot_sync_status), name='hubspot-sync-status'),
+    path('hubspot/sync/', csrf_exempt(hubspot_sync_trigger), name='hubspot-sync'),
 ]

@@ -129,6 +129,30 @@ class HubspotContact(models.Model):
         return f'{self.first_name} {self.last_name} ({self.email})'
 
 
+class TicketTopic(models.Model):
+    """Auto-generated topic cluster from ticket data."""
+    project = models.ForeignKey('projects.Project', on_delete=models.CASCADE, related_name='ticket_topics')
+    name = models.CharField(max_length=100)
+    keywords = models.JSONField(default=list, blank=True)
+    description = models.CharField(max_length=500, blank=True, default='')
+    ticket_count = models.IntegerField(default=0)
+    open_count = models.IntegerField(default=0)
+    resolved_count = models.IntegerField(default=0)
+    positive_count = models.IntegerField(default=0)
+    negative_count = models.IntegerField(default=0)
+    avg_sentiment_score = models.FloatField(default=0)
+    companies = models.JSONField(default=list, blank=True)
+    suggested_response = models.TextField(blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('project', 'name')
+        ordering = ['-ticket_count']
+
+    def __str__(self):
+        return f'{self.name} ({self.ticket_count} tickets)'
+
+
 class HubspotTicket(models.Model):
     """Cached HubSpot ticket record with sentiment."""
     project = models.ForeignKey('projects.Project', on_delete=models.CASCADE, related_name='hubspot_tickets')
@@ -144,6 +168,7 @@ class HubspotTicket(models.Model):
     sentiment_flags = models.JSONField(default=list, blank=True)
     notes = models.JSONField(default=list, blank=True)
     ai_summary = models.CharField(max_length=1000, blank=True, default='')
+    topic = models.ForeignKey('TicketTopic', on_delete=models.SET_NULL, null=True, blank=True, related_name='tickets')
     created_at_hubspot = models.DateTimeField(null=True, blank=True)
     last_updated_hubspot = models.DateTimeField(null=True, blank=True)
     synced_at = models.DateTimeField(auto_now=True)
