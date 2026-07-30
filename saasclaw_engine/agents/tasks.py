@@ -347,3 +347,31 @@ def _send_trial_email(sub, days_left):
         logger.info("Sent trial email to %s (%d days left)", sub.user.email, days_left)
     except Exception as exc:
         logger.warning("Failed to send trial email to %s: %s", sub.user.email, exc)
+
+
+@shared_task(queue='celery')
+def hubspot_daily_sync():
+    """Run daily HubSpot data sync and health report.
+
+    Syncs companies, contacts, and tickets from HubSpot to local DB,
+    then generates a health report.
+    """
+    import logging
+    from django.core.management import call_command
+
+    logger = logging.getLogger(__name__)
+    logger.info("Starting daily HubSpot sync...")
+
+    try:
+        call_command('hubspot_sync', project='hubspot-health-checker')
+        logger.info("HubSpot sync completed successfully")
+    except Exception as exc:
+        logger.error("HubSpot sync failed: %s", exc)
+        raise
+
+    try:
+        call_command('hubspot_health_report', project='hubspot-health-checker')
+        logger.info("HubSpot health report generated successfully")
+    except Exception as exc:
+        logger.error("HubSpot health report failed: %s", exc)
+        # Don't re-raise — sync is the important part, report is nice-to-have
