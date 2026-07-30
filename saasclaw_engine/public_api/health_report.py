@@ -407,6 +407,7 @@ def generate_health_report(project_slug='hubspot-health-checker'):
         'total_clients': len(clients),
         'total_contacts': HubspotContact.objects.filter(project=project).count(),
         'open_tickets': sum(1 for t in processed_tickets if t['status'] != 'Closed'),
+        'closed_tickets': sum(1 for t in processed_tickets if t['status'] == 'Closed'),
         'negative_tickets': sum(1 for t in processed_tickets if t['sentiment'] in ('negative', 'very-negative')),
         'orphans': orphan_contacts.count(),
     }
@@ -424,7 +425,7 @@ def format_report_telegram(report):
         "📊 <b>Daily Health Report</b>",
         f"🕐 {report['generated_at'][:16]} UTC",
         "",
-        f"🏢 {s['total_clients']} clients | 👥 {s['total_contacts']} contacts | 🎫 {s['open_tickets']} open tickets",
+        f"🏢 {s['total_clients']} clients | 👥 {s['total_contacts']} contacts | 🎫 {s['open_tickets']} open / {s.get('closed_tickets', 0)} closed",
         f"🔴 {s['critical']} critical | 🟡 {s['at_risk']} at-risk | 🟢 {s['healthy']} healthy",
         "",
     ]
