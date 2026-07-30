@@ -23,6 +23,7 @@ SaaSClaw Engine is the backend that powers [SaaSClaw](https://saasclaw.ai). It p
 - **Static Analysis (Semgrep)** — Custom Semgrep ruleset scans every deploy for malware and dangerous code patterns: reverse shells, crypto miners, keyloggers, shell injection, eval/exec abuse, obfuscated payloads, data exfiltration, credential harvesting, and shellcode execution
 - **Decommissioning** — Safe project decommissioning with systemd cleanup, nginx removal, and audit logging
 - **Per-Project Databases** — Auto-provisioned PostgreSQL databases for each deployed project
+- **Security Scanning** — VulnHunter-inspired attacker-first vulnerability analysis built into the wizard. Quick mode runs grep patterns for 6 common vulnerability classes (SQLi, XSS, hardcoded secrets, CORS, path traversal, command injection). Full mode runs a 4-phase methodology: Recon (map attack surface) → Hunt (trace inputs to sinks) → Disprove (falsify weak candidates) → Report (confirmed findings with exploit paths and fixes). The wizard IS the scanner — it uses its existing tools (read_file, run_command/grep, list_files) to execute the audit
 - **Form API** — Static sites can submit form data via a secure API endpoint (no backend needed)
 
 ## Install
@@ -531,6 +532,50 @@ commit_and_push_repo(project, message="Add new feature", token=token)
 
 ---
 
+## Security Scanning
+
+The engine includes a built-in vulnerability scanner inspired by [VulnHunter](https://github.com/vulnhunter)'s attacker-first methodology. It's available as a wizard tool and REST API.
+
+### How It Works
+
+The wizard IS the scanner. The `security_scan` tool returns phased instructions that the wizard executes using its existing tools (`run_command` for grep, `read_file`, `list_files`). No separate scanning service needed.
+
+### Scan Types
+
+| Type | What it does | When to use |
+|------|-------------|------------|
+| **Quick** | Fast grep for 6 vulnerability patterns: SQL injection, XSS, hardcoded secrets, CORS misconfiguration, path traversal, command injection | Before every deploy |
+| **Full** | 4-phase methodology: **Recon** (map attack surface) → **Hunt** (trace inputs to sinks) → **Disprove** (falsify ~50% of candidates) → **Report** (confirmed findings with exploit paths + fixes) | Regular security audits |
+| **Recent changes** | Full scan scoped to files changed since last commit | After each feature |
+
+### API Endpoints
+
+```bash
+# Trigger a scan
+POST /api/v1/projects/{slug}/security/scan/
+{"scan_type": "quick"}  # or "full", "recent_changes"
+
+# List scans (last 20)
+GET /api/v1/projects/{slug}/security/scans/
+
+# Get scan detail
+GET /api/v1/projects/{slug}/security/scans/{id}/
+```
+
+### Wizard Commands
+
+Users can trigger scans by asking the wizard:
+- "Check security"
+- "Run a full security audit"
+- "Scan for vulnerabilities"
+- "Audit this code for CORS issues"
+
+### Results Model
+
+Scan results are stored with severity counts (critical/high/medium/low), structured findings JSON, and raw output. Results are scoped per-project with cross-project isolation enforced.
+
+---
+
 ## PII Protection
 
 Every message sent to an LLM passes through **PII Guard**, a Presidio-based microservice on `localhost:8900`.
@@ -578,6 +623,7 @@ Vite (React/Vue/Svelte), Next.js (SSR), Django, Flask, FastAPI, HTMX, Hugo, .NET
 | `saasclaw_engine.agents` | Celery task models and async task execution |
 | `saasclaw_engine.projects` | Project model with framework, runtime, risk tier, and config fields |
 | `saasclaw_engine.studio_models` | AgentSession, ProviderKey, Workspace, Todo, TokenUsage models |
+| `saasclaw_engine.agent` | Agent runner, 27 tools (file I/O, bash, git, web, security scan, todos) |
 | `saasclaw_engine.help_search` | RAG-based help search using ChromaDB |
 
 ## Why Self-Host?
@@ -601,6 +647,7 @@ SaaSClaw Engine is the open-source alternative to closed AI app builders. When y
 | **Form API for static sites** | ✅ | ❌ | ❌ | ❌ |
 | **PII redaction** | ✅ Presidio + regex fallback | ❌ | ❌ | ❌ |
 | **Prompt injection defense** | ✅ 1094 patterns, 23 languages | ❌ | ❌ | ❌ |
+| **Security scanning (VulnHunter)** | ✅ 4-phase attacker-first | ❌ | ❌ | ❌ |
 | **Malware detection (Semgrep)** | ✅ 15 custom rules | ❌ | ❌ | ❌ |
 
 With SaaSClaw self-hosted, your only costs are the infrastructure you already run and whatever LLM API fees you already pay. No subscriptions, no credits, no token packages to purchase.
@@ -609,7 +656,7 @@ With SaaSClaw self-hosted, your only costs are the infrastructure you already ru
 
 ## Testing
 
-591 tests across 16 test files.
+655 tests across 18 test files (including 64 security scanner tests + CORS demo integration tests).
 
 ```bash
 python -m pytest           # run all
