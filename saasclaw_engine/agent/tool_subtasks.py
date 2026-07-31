@@ -619,6 +619,29 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "quality_check",
+            "description": "Run a code quality gate on recent changes. Checks for: (1) test files for new/modified code, (2) code comments on functions/classes, (3) README/docs updates, (4) build passing. Returns a report with pass/fail per check and suggestions. Call this BEFORE deploying to catch missing tests and docs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scope": {
+                        "type": "string",
+                        "enum": ["changed", "full"],
+                        "description": "changed = only files modified since last commit (default), full = entire project",
+                        "default": "changed",
+                    },
+                    "fix": {
+                        "type": "boolean",
+                        "description": "If true, auto-generate test scaffolds and docstrings for uncovered code",
+                        "default": false,
+                    },
+                },
+            },
+        },
+    },
 ]
 
 

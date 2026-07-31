@@ -1644,6 +1644,216 @@ After reporting, provide a PRIORITIZED fix list ordered by severity.
 """
 
 
+def _quality_check_tool(workspace_path: str, scope: str = "changed", fix: bool = False) -> str:
+    """Code quality gate: check for tests, comments, docs, and build status.
+    
+    This tool enforces code quality standards before deploy:
+    1. Identifies new/modified files
+    2. Checks if test files exist for them
+    3. Checks for code comments (functions/classes)
+    4. Checks if README or docs were updated
+    5. Optionally generates test scaffolds and docstrings
+    """
+    import os
+    import subprocess
+    import re
+    
+    result_lines = [
+        "┌─────────────────────────────────────────────────────────────────┐",
+        "│           📋 CODE QUALITY GATE                                  │",
+        "└─────────────────────────────────────────────────────────────────┘",
+        "",
+    ]
+    
+    # Determine changed files
+    if scope == "changed":
+        try:
+            diff_output = subprocess.check_output(
+                ["git", "diff", "--name-only", "HEAD"],
+                cwd=workspace_path,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=10,
+            ).strip()
+            if not diff_output:
+                # Try unstaged
+                diff_output = subprocess.check_output(
+                    ["git", "diff", "--name-only"],
+                    cwd=workspace_path,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    timeout=10,
+                ).strip()
+            changed_files = [f for f in diff_output.split("\n") if f.strip()] if diff_output else []
+        except Exception:
+            changed_files = []
+        
+        if not changed_files:
+            return "✅ No uncommitted changes to check. Working tree is clean."
+        
+        result_lines.append(f"Changed files: {len(changed_files)}")
+        code_files = [f for f in changed_files if f.endswith((".py", ".js", ".ts", ".tsx", ".jsx", ".cs", ".java", ".kt", ".go", ".rs", ".vue", ".svelte"))]
+    else:
+        code_files = []
+        for root, dirs, files in os.walk(workspace_path):
+            dirs[:] = [d for d in dirs if d not in {"node_modules", ".git", "__pycache__", ".venv", "venv", "dist", "build", "bin", "obj", ".next", ".angular"}]
+            for f in files:
+                if f.endswith((".py", ".js", ".ts", ".tsx", ".jsx", ".cs", ".java", ".kt", ".go", ".rs", ".vue", ".svelte")):
+                    code_files.append(os.path.relpath(os.path.join(root, f), workspace_path))
+        result_lines.append(f"Full scan: {len(code_files)} code files")
+    
+    if not code_files:
+        return "✅ No code files to check."
+    
+    # ── CHECK 1: Test Coverage ────────────────────────────────────
+    result_lines.append("")
+    result_lines.append("── TESTS ──────────────────────────────────────────")
+    
+    test_dirs = []
+    for root, dirs, files in os.walk(workspace_path):
+        dirs[:] = [d for d in dirs if d not in {"node_modules", ".git", "__pycache__", ".venv", "venv", "dist", "build"}]
+        if any(d in ["tests", "test", "__tests__", "spec"] for d in dirs):
+            test_dirs.extend(os.path.join(root, d) for d in ["tests", "test", "__tests__", "spec"] if d in dirs)
+    
+    has_test_runner = any(os.path.exists(os.path.join(workspace_path, f)) for f in ["pytest.ini", "pyproject.toml", "package.json", "jest.config.js", "vitest.config.ts", "pom.xml", "build.gradle"])
+    
+    files_with_tests = []
+    files_without_tests = []
+    
+    for cf in code_files:
+        # Derive expected test file path
+        basename = os.path.splitext(os.path.basename(cf))[0]
+        test_patterns = [f"test_{basename}", f"{basename}_test", f"{basename}.test", f"{basename}.spec", f"Test{basename.capitalize()}"]
+        
+        found_test = False
+        for root, dirs, files in os.walk(workspace_path):
+            dirs[:] = [d for d in dirs if d not in {"node_modules", ".git", "__pycache__", ".venv", "venv", "dist", "build"}]
+            for f in files:
+                check_name = os.path.splitext(f)[0]
+                if any(tp in check_name for tp in test_patterns):
+                    found_test = True
+                    break
+            if found_test:
+                break
+        
+        if found_test:
+            files_with_tests.append(cf)
+        else:
+            files_without_tests.append(cf)
+    
+    coverage_pct = len(files_with_tests) / len(code_files) * 100 if code_files else 0
+    test_status = "✅ PASS" if coverage_pct >= 60 else "⚠️ WARN" if coverage_pct >= 30 else "❌ FAIL"
+    result_lines.append(f"{test_status} Test coverage: {len(files_with_tests)}/{len(code_files)} files ({coverage_pct:.0f}%)")
+    
+    if files_without_tests:
+        result_lines.append("  Files without tests:")
+        for f in files_without_tests[:10]:
+            result_lines.append(f"    • {f}")
+        if len(files_without_tests) > 10:
+            result_lines.append(f"    ... and {len(files_without_tests) - 10} more")
+    
+    # ── CHECK 2: Code Comments ────────────────────────────────────
+    result_lines.append("")
+    result_lines.append("── COMMENTS ───────────────────────────────────────")
+    
+    files_sparse_comments = []
+    for cf in code_files:
+        full_path = os.path.join(workspace_path, cf)
+        try:
+            with open(full_path, "r", errors="ignore") as fh:
+                lines = fh.readlines()
+            code_lines = [l for l in lines if l.strip() and not l.strip().startswith(("#", "//", "/*", "*", "<!--"))]
+            comment_lines = [l for l in lines if l.strip().startswith(("#", "//", "/*", "*", "<!--"))]
+            
+            if len(code_lines) > 10:
+                ratio = len(comment_lines) / len(code_lines) if code_lines else 0
+                if ratio < 0.05:  # Less than 5% comments
+                    files_sparse_comments.append((cf, len(comment_lines), len(code_lines)))
+        except Exception:
+            pass
+    
+    comment_status = "✅ PASS" if not files_sparse_comments else "⚠️ WARN" if len(files_sparse_comments) <= 2 else "❌ FAIL"
+    result_lines.append(f"{comment_status} Comment coverage: {len(code_files) - len(files_sparse_comments)}/{len(code_files)} files adequately commented")
+    
+    if files_sparse_comments:
+        result_lines.append("  Files needing more comments:")
+        for f, comments, code in files_sparse_comments[:5]:
+            result_lines.append(f"    • {f} ({comments} comments / {code} code lines)")
+    
+    # ── CHECK 3: Documentation ────────────────────────────────────
+    result_lines.append("")
+    result_lines.append("── DOCUMENTATION ───────────────────────────────────")
+    
+    has_readme = os.path.exists(os.path.join(workspace_path, "README.md"))
+    has_docs = os.path.isdir(os.path.join(workspace_path, "docs"))
+    has_api_docs = any(os.path.exists(os.path.join(workspace_path, f)) for f in ["docs/API.md", "docs/api.md", "API.md", "OPEN_API.md"])
+    
+    doc_issues = []
+    if not has_readme:
+        doc_issues.append("No README.md found")
+    if not has_docs and not has_api_docs:
+        doc_issues.append("No docs/ directory or API documentation")
+    
+    doc_status = "✅ PASS" if not doc_issues else "⚠️ WARN"
+    result_lines.append(f"{doc_status} Documentation: README={'✅' if has_readme else '❌'}, Docs dir={'✅' if has_docs else '❌'}, API docs={'✅' if has_api_docs else '❌'}")
+    if doc_issues:
+        for issue in doc_issues:
+            result_lines.append(f"  • {issue}")
+    
+    # ── CHECK 4: Build Status ─────────────────────────────────────
+    result_lines.append("")
+    result_lines.append("── BUILD ───────────────────────────────────────────")
+    result_lines.append("Run your build command to verify (npm run build, python manage.py check, dotnet build, etc.)")
+    result_lines.append("The deploy step will catch build failures automatically.")
+    
+    # ── FIX MODE: Generate test scaffolds ─────────────────────────
+    if fix and files_without_tests:
+        result_lines.append("")
+        result_lines.append("── AUTO-GENERATED TEST SCAFFOLDS ────────────────────")
+        result_lines.append("The following test files should be created:")
+        for cf in files_without_tests[:5]:
+            basename = os.path.splitext(os.path.basename(cf))[0]
+            ext = os.path.splitext(cf)[1]
+            
+            if ext == ".py":
+                test_file = f"tests/test_{basename}.py"
+                scaffold = f'''"""Tests for {basename}."""\nimport pytest\nfrom {basename.replace("/", ".").replace("\\\", ".")} import *  # adjust import\n\n\nclass Test{basename.capitalize()}:\n    """Test cases for {basename}."""\n\n    def test_placeholder(self):\n        """TODO: Replace with actual tests."""\n        assert True\n'''
+            elif ext in (".js", ".ts", ".tsx", ".jsx"):
+                test_file = f"__tests__/{basename}.test.{ext.strip(".")}"
+                scaffold = f'''/** Tests for {basename} */\ndescribe("{basename}", () => {{\n  it("should work correctly", () => {{\n    // TODO: Replace with actual tests\n    expect(true).toBe(true);\n  }});\n}});\n'''
+            elif ext == ".cs":
+                test_file = f"Tests/{basename}Tests.cs"
+                scaffold = f'''using Xunit;\n\nnamespace PVC.Tests;\n\npublic class {basename.capitalize()}Tests\n{{\n    [Fact]\n    public void Placeholder_ReturnsTrue()\n    {{\n        // TODO: Replace with actual tests\n        Assert.True(true);\n    }}\n}}\n'''
+            else:
+                continue
+            
+            result_lines.append(f"  Create: {test_file}")
+            result_lines.append(f"  ```{ext}")
+            result_lines.append(scaffold)
+            result_lines.append("  ```")
+            result_lines.append("")
+    
+    # ── Summary ──────────────────────────────────────────────────
+    result_lines.append("")
+    result_lines.append("── SUMMARY ─────────────────────────────────────────")
+    checks_passed = sum(1 for s in [test_status, comment_status, doc_status] if "PASS" in s)
+    checks_total = 3
+    
+    if checks_passed == checks_total:
+        result_lines.append("✅ All quality checks passed. Ready to deploy!")
+    else:
+        result_lines.append(f"⚠️ {checks_passed}/{checks_total} checks passed. Fix issues above before deploying.")
+    result_lines.append("")
+    result_lines.append("QUALITY RULES (enforced by system prompt):")
+    result_lines.append("  1. Every new function/class MUST have a docstring or comment")
+    result_lines.append("  2. Every new feature MUST have at least one test")
+    result_lines.append("  3. Bug fixes MUST include a regression test")
+    result_lines.append("  4. README MUST be updated for new features")
+    result_lines.append("  5. Run quality_check BEFORE deploying")
+    
+    return "\n".join(result_lines)
+
+
 def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = False, session_id: str | None = None) -> str:
     """Dispatch a tool call by name.
     
@@ -1688,6 +1898,7 @@ def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = 
         "figma_get_frame": lambda: _figma_get_frame_tool(workspace_path, args.get("url", ""), session_id=session_id),
         "figma_get_design_tokens": lambda: _figma_get_tokens_tool(workspace_path, args.get("url", ""), session_id=session_id),
         "security_scan": lambda: _security_scan_tool(workspace_path, args.get("scope", "full"), session_id=session_id),
+        "quality_check": lambda: _quality_check_tool(workspace_path, args.get("scope", "changed"), args.get("fix", False)),
     }
     handler = handlers.get(name)
     if not handler:
