@@ -636,7 +636,7 @@ TOOL_DEFINITIONS = [
                     "fix": {
                         "type": "boolean",
                         "description": "If true, auto-generate test scaffolds and docstrings for uncovered code",
-                        "default": false,
+                        "default": False,
                     },
                 },
             },

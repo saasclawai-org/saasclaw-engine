@@ -1817,13 +1817,40 @@ def _quality_check_tool(workspace_path: str, scope: str = "changed", fix: bool =
             
             if ext == ".py":
                 test_file = f"tests/test_{basename}.py"
-                scaffold = f'''"""Tests for {basename}."""\nimport pytest\nfrom {basename.replace("/", ".").replace("\\\", ".")} import *  # adjust import\n\n\nclass Test{basename.capitalize()}:\n    """Test cases for {basename}."""\n\n    def test_placeholder(self):\n        """TODO: Replace with actual tests."""\n        assert True\n'''
+                module_path = basename.replace("/", ".").replace("\\\\", ".")
+                scaffold = '"""Tests for ' + basename + '."""\n'
+                scaffold += 'import pytest\n'
+                scaffold += 'from ' + module_path + ' import *  # adjust import\n'
+                scaffold += '\n\n'
+                scaffold += 'class Test' + basename.capitalize() + ':\n'
+                scaffold += '    """Test cases for ' + basename + '."""\n'
+                scaffold += '\n'
+                scaffold += '    def test_placeholder(self):\n'
+                scaffold += '        """TODO: Replace with actual tests."""\n'
+                scaffold += '        assert True\n'
             elif ext in (".js", ".ts", ".tsx", ".jsx"):
-                test_file = f"__tests__/{basename}.test.{ext.strip(".")}"
-                scaffold = f'''/** Tests for {basename} */\ndescribe("{basename}", () => {{\n  it("should work correctly", () => {{\n    // TODO: Replace with actual tests\n    expect(true).toBe(true);\n  }});\n}});\n'''
+                test_file = "__tests__/" + basename + ".test." + ext.strip(".")
+                scaffold = '/** Tests for ' + basename + ' */\n'
+                scaffold += 'describe("' + basename + '", () => {\n'
+                scaffold += '  it("should work correctly", () => {\n'
+                scaffold += '    // TODO: Replace with actual tests\n'
+                scaffold += '    expect(true).toBe(true);\n'
+                scaffold += '  });\n'
+                scaffold += '});\n'
             elif ext == ".cs":
-                test_file = f"Tests/{basename}Tests.cs"
-                scaffold = f'''using Xunit;\n\nnamespace PVC.Tests;\n\npublic class {basename.capitalize()}Tests\n{{\n    [Fact]\n    public void Placeholder_ReturnsTrue()\n    {{\n        // TODO: Replace with actual tests\n        Assert.True(true);\n    }}\n}}\n'''
+                test_file = "Tests/" + basename + "Tests.cs"
+                class_name = basename.capitalize() + "Tests"
+                scaffold = 'using Xunit;\n\n'
+                scaffold += 'namespace PVC.Tests;\n\n'
+                scaffold += 'public class ' + class_name + '\n'
+                scaffold += '{\n'
+                scaffold += '    [Fact]\n'
+                scaffold += '    public void Placeholder_ReturnsTrue()\n'
+                scaffold += '    {\n'
+                scaffold += '        // TODO: Replace with actual tests\n'
+                scaffold += '        Assert.True(true);\n'
+                scaffold += '    }\n'
+                scaffold += '}\n'
             else:
                 continue
             
