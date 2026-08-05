@@ -264,6 +264,10 @@ class SiteSettings(models.Model):
         default=False,
         help_text='New projects default to LLM gateway mode (data stays on-server).'
     )
+    predator_chat_default = models.BooleanField(
+        default=False,
+        help_text='Generated projects use Predator (GPT-OSS-20B) for chat/AI features instead of third-party APIs.'
+    )
     ai_disclosure_required = models.BooleanField(
         default=True,
         help_text='Require AI disclosure checkbox on project intake form.'

@@ -182,6 +182,7 @@ EFFICIENCY_WARNING_THRESHOLD = 12  # Warn the model to wrap up after this many c
 # ---------------------------------------------------------------------------
 AVAILABLE_MODELS = {
     "zai": [
+        {"model": "glm-5.2", "label": "GLM-5.2 (1M context, reasoning)", "vision": False},
         {"model": "glm-5-turbo", "label": "GLM-5 Turbo (fast, cheap)", "vision": False},
         {"model": "glm-5.1", "label": "GLM-5.1 (long-horizon agent)", "vision": False},
         {"model": "glm-5", "label": "GLM-5 (foundation)", "vision": False},
