@@ -759,7 +759,22 @@ def projects_list_create(request):
         is_active=True,
     )
 
-    return Response(ProjectSerializer(project).data, status=status.HTTP_201_CREATED)
+    # Auto-deploy the template (step 0: user sees a live hello-world immediately).
+    # Parity with the website flow (studio/views/project_crud.py) — the template is
+    # known-good scaffold code, so shipping it right away is safe; wizard output
+    # still requires a manual deploy.
+    deploy_url = None
+    try:
+        from saasclaw_engine.agents.tasks import run_preview_deploy_job
+        result = run_preview_deploy_job.delay(project.id, user.id)
+        result.get(timeout=120)
+        deploy_url = f"https://{project.preview_domain}"
+    except Exception as exc:
+        logger.warning("Auto-deploy failed for %s: %s", slug, exc)
+
+    data = ProjectSerializer(project).data
+    data['deploy_url'] = deploy_url
+    return Response(data, status=status.HTTP_201_CREATED)
 
 
 @api_view(['GET', 'PATCH', 'DELETE'])
@@ -939,6 +954,12 @@ def sessions_list_create(request, slug):
     workspace = _project_workspace(project)
     if not workspace:
         return Response({'detail': 'No workspace found.'}, status=status.HTTP_400_BAD_REQUEST)
+    # Sandbox-mount parity: session workspaces must live under WORKSPACE_BASE
+    from studio.views.workspace_ops import WORKSPACE_BASE, _ensure_workspace
+    if not workspace.local_path.startswith(WORKSPACE_BASE):
+        workspace = _ensure_workspace(project, user)
+        if not workspace or not workspace.local_path.startswith(WORKSPACE_BASE):
+            return Response({'detail': 'Could not prepare a sandbox workspace.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     session = AgentSession.objects.create(
         project=project,
@@ -1015,6 +1036,18 @@ def session_send(request, slug, session_id):
     workspace = _project_workspace(project)
     if not workspace:
         return Response({'detail': 'No workspace found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Ensure the workspace is sandbox-mounted (under WORKSPACE_BASE) — same repair
+    # the website performs in wizard.py. Workspaces elsewhere on disk are not bound
+    # into the wizard sandbox container, which forces the agent to clone by hand.
+    from studio.views.workspace_ops import WORKSPACE_BASE, _ensure_workspace
+    if not workspace.local_path.startswith(WORKSPACE_BASE):
+        workspace = _ensure_workspace(project, user)
+        if not workspace or not workspace.local_path.startswith(WORKSPACE_BASE):
+            return Response({'detail': 'Could not prepare a sandbox workspace.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if session.workspace_id != workspace.id:
+            session.workspace = workspace
+            session.save(update_fields=['workspace'])
 
     # Prevent duplicate concurrent requests
     if session.status == 'running':
@@ -1246,6 +1279,65 @@ def session_reset(request, project_slug, session_id):
 
 # ---- Deploy ----
 
+def _merge_session_work_to_main(project):
+    """Merge the active session work branch into main in the deploy repo.
+
+    Mirrors the website deploy flow (_auto_commit_and_deploy) minus the deploy
+    trigger: chown workspace, commit pending changes, push work branch to the
+    bare repo, merge origin/<work_branch> into main, push main back. Safe no-op
+    when there is no session workspace or nothing new to merge.
+    """
+    import subprocess as sp
+    from saasclaw_engine.studio_models.models import Workspace
+
+    ws = Workspace.objects.filter(project=project, is_active=True).order_by('-created_at').first()
+    if not ws or not ws.local_path:
+        return
+    ws_path = ws.local_path
+    sp.run(['sudo', 'chown', '-R', 'saasclaw:saasclaw', ws_path], capture_output=True, timeout=30)
+    sp.run(['sudo', 'chmod', '-R', 'a+rwX', ws_path], capture_output=True, timeout=30)
+    work_branch = ws.work_branch or 'main'
+
+    def _git(args, cwd):
+        env = dict(os.environ)
+        env['GIT_AUTHOR_NAME'] = env['GIT_COMMITTER_NAME'] = 'SaaSClaw Agent'
+        env['GIT_AUTHOR_EMAIL'] = env['GIT_COMMITTER_EMAIL'] = 'saasclaw@saasclaw.ai'
+        r = sp.run(args, cwd=cwd, capture_output=True, text=True, timeout=30, env=env)
+        if r.returncode != 0:
+            logger.warning('git %s failed: %s', ' '.join(args[:2]), (r.stderr or '').strip()[:200])
+        return r
+
+    # Commit any pending wizard changes on the work branch, then push it
+    status = _git(['git', 'status', '--porcelain'], ws_path)
+    if status.stdout.strip():
+        _git(['git', 'add', '-A'], ws_path)
+        _git(['git', 'commit', '-m', 'Wizard: auto-commit pending changes'], ws_path)
+        _git(['git', 'push', 'origin', work_branch], ws_path)
+
+    if work_branch == 'main':
+        return
+    deploy_repo = project.workspace_root or ''
+    if deploy_repo and not os.path.isdir(os.path.join(deploy_repo, '.git')):
+        alt = os.path.join(deploy_repo, 'repo')
+        if os.path.isdir(os.path.join(alt, '.git')):
+            deploy_repo = alt
+    if not deploy_repo or not os.path.isdir(deploy_repo):
+        return
+    _git(['git', 'fetch', 'origin'], deploy_repo)
+    _git(['git', 'clean', '-fd'], deploy_repo)
+    merge = _git(['git', 'merge', f'origin/{work_branch}', '--no-edit'], deploy_repo)
+    if merge.returncode != 0 or 'CONFLICT' in merge.stdout or 'conflict' in merge.stderr:
+        _git(['git', 'merge', '--abort'], deploy_repo)
+        logger.warning('API deploy: merge conflict, force-syncing main from %s', work_branch)
+        _git(['git', 'reset', '--hard', f'origin/{work_branch}'], deploy_repo)
+        _git(['git', 'push', 'origin', 'main', '--force-with-lease'], deploy_repo)
+    else:
+        _git(['git', 'push', 'origin', 'main'], deploy_repo)
+    # .git ownership for the deploy worker
+    sp.run(['sudo', 'chown', '-R', 'saasclaw:saasclaw', os.path.join(deploy_repo, '.git')],
+           capture_output=True, timeout=30)
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def deploy_trigger(request, slug):
@@ -1257,6 +1349,12 @@ def deploy_trigger(request, slug):
 
     workspace = project.workspace_root or f'/srv/saasclaw/projects/{slug}/repo'
     environment = request.data.get('environment', 'preview')
+    # Merge pending wizard work (session work branch) into main before deploying —
+    # parity with the website Deploy button flow. Non-fatal on failure.
+    try:
+        _merge_session_work_to_main(project)
+    except Exception as exc:
+        logger.warning('Work-branch merge failed for %s: %s', slug, exc)
     # Check if this project uses the proper deploy pipeline (Android, Java, .NET, etc.)
     from saasclaw_engine.deployments.service import deploy_preview, deploy_production
     from saasclaw_engine.deployments.models import Environment
@@ -1266,8 +1364,14 @@ def deploy_trigger(request, slug):
         Environment.RuntimeKind.JAVA,
         Environment.RuntimeKind.DOTNET,
         Environment.RuntimeKind.NODE_SSR,
+        Environment.RuntimeKind.NODE_STATIC,
+        Environment.RuntimeKind.STATIC,
+        Environment.RuntimeKind.DJANGO,
     ):
-        # Use the proper deploy pipeline for managed runtimes
+        # Use the proper deploy pipeline for managed runtimes.
+        # static/node_static/django included: the local-build fallback below builds
+        # files but never writes the nginx vhost, so fresh API-created projects sat
+        # on the "Project Not Found" fallback page until an engine deploy ran.
         try:
             dep = deploy_preview(project, triggered_by=user) if environment == 'preview' else deploy_production(project, triggered_by=user)
             return Response({
@@ -1275,7 +1379,7 @@ def deploy_trigger(request, slug):
                 'status': dep.status,
                 'deploy_status': dep.status,
                 'result': dep.deploy_log_object_key or '',
-                'url': f'https://{slug}.{"preview." if environment == "preview" else ""}saasclaw.ai',
+                'url': f"https://{env_obj.domain}" if env_obj.domain else f'https://{slug}.{"preview." if environment == "preview" else ""}saasclaw.ai',
                 'web_root': project.workspace_root or '',
                 'environment': environment,
                 'created_at': dep.created_at.isoformat() if dep.created_at else None,
