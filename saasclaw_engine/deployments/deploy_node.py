@@ -140,7 +140,12 @@ def _deploy_node_ssr_environment(project: Project, environment: Environment, dep
         handle.write(f'Service: {service_name}\n')
 
     # Install dependencies
-    install_cmd = environment.install_command or 'npm install'
+    # Default installs go through pnpm (content-addressable store shared across
+    # all projects). Existing npm package-lock.json files are converted faithfully
+    # via `pnpm import`; repos with pnpm-lock.yaml use it directly.
+    install_cmd = environment.install_command or (
+        "sh -c '[ ! -f pnpm-lock.yaml ] && [ -f package-lock.json ] && pnpm import; pnpm install'"
+    )
     _run_command(install_cmd, repo_path, log_file, env=build_env or None)
 
     # Build
