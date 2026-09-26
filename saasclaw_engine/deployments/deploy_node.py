@@ -54,6 +54,13 @@ def _detect_node_version(repo_path: Path) -> str | None:
             engines = pkg.get('engines', {})
             node_spec = engines.get('node', '')
             if node_spec:
+                # Range spec like ">=18.18.0" is a MINIMUM, not an exact pin —
+                # prefer the highest installed Node major that satisfies it.
+                m = _re.match(r'^\s*>=\s*v?(\d+)', node_spec)
+                if m and '<' not in node_spec:
+                    best = _resolve_node_minimum(int(m.group(1)))
+                    if best:
+                        return best
                 m = _re.search(r'(\d+)', node_spec)
                 if m:
                     return m.group(1)
@@ -61,6 +68,32 @@ def _detect_node_version(repo_path: Path) -> str | None:
             pass
 
     return None
+
+
+def _resolve_node_minimum(minimum: int) -> str | None:
+    """Return the highest installed Node major >= minimum (fnm versions or system node)."""
+    import os as _os
+    import re as _re
+    import subprocess as _subprocess
+
+    majors = set()
+    versions_dir = f'{FNM_PATH}/node-versions'
+    if _os.path.isdir(versions_dir):
+        for child in _os.listdir(versions_dir):
+            m = _re.match(r'v(\d+)', child)
+            if m:
+                majors.add(int(m.group(1)))
+    try:
+        out = _subprocess.run(
+            ['/usr/bin/node', '--version'], capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        m = _re.match(r'v(\d+)', out)
+        if m:
+            majors.add(int(m.group(1)))
+    except Exception:
+        pass
+    eligible = sorted(m for m in majors if m >= minimum)
+    return str(eligible[-1]) if eligible else None
 
 
 def _node_binary_path(version: str) -> str:
