@@ -202,12 +202,28 @@ def _deploy_node_ssr_environment(project: Project, environment: Environment, dep
     else:
         npm_bin = '/usr/bin/npm'
 
+    # Determine start command. Some repos use a cross-platform `node -e`
+    # dispatcher as "start" (routing to start:unix/start:windows); appending
+    # `-- --port` there lands on `node -e` itself and crashes ("bad option").
+    # For those, pass the port to the unix script instead. Wrangler-based
+    # runners also ignore PORT env, so the flag must reach the real command.
+    exec_start = f'{npm_bin} start -- --port {port}'
+    try:
+        import json as _json
+        _pkg = _json.loads((repo_path / 'package.json').read_text())
+        _scripts = _pkg.get('scripts', {}) or {}
+        _start = str(_scripts.get('start', ''))
+        if _start.lstrip().startswith('node -e') and 'start:unix' in _scripts:
+            exec_start = f'{npm_bin} run start:unix -- --port {port}'
+    except Exception:
+        pass
+
     # Systemd service (always updated)
     _ensure_systemd_service(
         service_name=service_name,
         cwd=str(repo_path),
         env_file=str(env_file),
-        exec_start=f'{npm_bin} start -- --port {port}',
+        exec_start=exec_start,
         description=f'SaaSClaw Node SSR app for {service_name}',
     )
 
