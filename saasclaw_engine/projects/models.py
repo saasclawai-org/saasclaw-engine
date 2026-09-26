@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
 
@@ -56,7 +57,7 @@ class Project(models.Model):
 
     owner = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='owned_projects')
     name = models.CharField(max_length=200)
-    slug = models.SlugField(unique=True)
+    slug = models.SlugField(unique=True, validators=[RegexValidator(r"^[a-z0-9-]+$", "Slug may only contain lowercase letters, numbers, and hyphens. No dots.")])
     description = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     framework = models.CharField(max_length=32, choices=Framework.choices, default=Framework.HTML)

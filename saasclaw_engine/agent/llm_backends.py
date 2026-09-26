@@ -208,7 +208,7 @@ AVAILABLE_MODELS = {
         {"model": "kimi-k2", "label": "Kimi K2 (fast, affordable)", "vision": False},
     ],
     "ollama-cloud": [
-        {"model": "glm-5.2", "label": "GLM-5.2 (1M context, reasoning)", "vision": False},
+        {"model": "glm-5.2:cloud", "label": "GLM-5.2 (1M context, reasoning)", "vision": False},
         {"model": "deepseek-v4-pro", "label": "DeepSeek V4 Pro (1M context)", "vision": False},
         {"model": "kimi-k2.7-code", "label": "Kimi K2.7 Code", "vision": False},
         {"model": "nemotron-3-ultra", "label": "Nemotron 3 Ultra (550B)", "vision": False},
