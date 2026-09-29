@@ -346,6 +346,20 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "ask_boardy",
+            "description": "Email Boardy (boardy@boardy.ai), an AI superconnector, to get the user introduced to someone useful: beta testers, first customers, investors, a hire, a cofounder, or someone who has solved the same problem. Use when the user asks to 'ask Boardy' or 'connect with Boardy', OR when you spot a person-shaped problem (e.g. after deploying they ask 'how do I get users?'). First offer in ONE sentence: 'Want me to ask Boardy to find you [kind of person]?' and only call the tool after they agree. Compose the brief yourself, 150-300 words, first person as the wizard agent: (1) who the user is and what they just built - use real details from this project, (2) who they need to meet and why now, (3) one concrete ask. The tool sends the email; do not write it to a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "brief": {"type": "string", "description": "Full email body to send Boardy, written as the wizard agent on the user's behalf."},
+                },
+                "required": ["brief"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "set_env_var",
             "description": "Set an environment variable for the project's preview environment. Use for API keys, secrets, config.",
             "parameters": {

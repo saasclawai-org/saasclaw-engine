@@ -959,6 +959,55 @@ def web_search(workspace_path: str, query: str, count: int = 5) -> str:
         return f"Error searching: {exc}"
 
 
+
+# --- Boardy: AI superconnector integration (boardy.ai) ---
+BOARDY_TO_EMAIL = "boardy@boardy.ai"
+
+def ask_boardy(workspace_path: str, brief: str) -> str:
+    """Email Boardy (boardy@boardy.ai) an intro request on the user's behalf.
+
+    The recipient is hardcoded on purpose: this tool can only ever write to
+    Boardy, so prompt-injected project files cannot turn it into an
+    arbitrary exfiltration channel.
+    """
+    import smtplib
+    from email.message import EmailMessage
+
+    brief = (brief or "").strip()
+    if len(brief) < 40:
+        return ("Error: the brief is too short. Write 150-300 words covering who the user is, "
+                "what they built, who they need to meet, and one concrete ask.")
+    host = os.environ.get("BOARDY_SMTP_HOST") or os.environ.get("EMAIL_HOST", "smtp.gmail.com")
+    port = int(os.environ.get("BOARDY_SMTP_PORT") or os.environ.get("EMAIL_PORT", "587"))
+    user = os.environ.get("BOARDY_SMTP_USER") or os.environ.get("EMAIL_HOST_USER", "")
+    password = os.environ.get("BOARDY_SMTP_PASSWORD") or os.environ.get("EMAIL_HOST_PASSWORD", "")
+    sender = os.environ.get("BOARDY_FROM") or user
+    if not user or not password:
+        return ("Error: email sending is not configured on the server (missing EMAIL_HOST_USER / "
+                "EMAIL_HOST_PASSWORD). Tell the user the email to Boardy could not be sent yet.")
+    try:
+        slug = _project_slug_from_workspace(workspace_path) or "project"
+    except Exception:
+        slug = "project"
+    msg = EmailMessage()
+    msg["From"] = "SaaSClaw Wizard <%s>" % sender
+    msg["To"] = BOARDY_TO_EMAIL
+    msg["Subject"] = "Intro request from the SaaSClaw wizard (project: %s)" % slug
+    msg.set_content(brief)
+    try:
+        with smtplib.SMTP(host, port, timeout=30) as smtp:
+            smtp.starttls()
+            smtp.login(user, password)
+            smtp.send_message(msg)
+        logger.info("ask_boardy: sent intro request for project %s to %s", slug, BOARDY_TO_EMAIL)
+        return ("Email sent to Boardy (%s) on behalf of the user, from %s. "
+                "Boardy replies by email, usually within a day or two - suggest the user watch "
+                "their inbox and follow up when an introduction lands. More about him: https://boardy.ai"
+                % (BOARDY_TO_EMAIL, sender))
+    except Exception as e:
+        logger.warning("ask_boardy send failed: %s", e)
+        return "Error sending email to Boardy: %s: %s" % (type(e).__name__, e)
+
 def get_env_vars(workspace_path: str) -> str:
     """List env vars for this project from the database."""
     try:
@@ -1913,6 +1962,7 @@ def execute_tool(workspace_path: str, name: str, args: dict, restricted: bool = 
         "deploy_project": lambda: _deploy_project_tool(workspace_path, args.get("environment", "preview"), session_id=session_id),
         "web_fetch": lambda: web_fetch(workspace_path, args.get("url", ""), args.get("max_chars", 5000)),
         "web_search": lambda: web_search(workspace_path, args.get("query", ""), args.get("count", 5)),
+        "ask_boardy": lambda: ask_boardy(workspace_path, args.get("brief", "")),
         "set_env_var": lambda: set_env_var(workspace_path, args.get("key", ""), args.get("value", ""), args.get("is_secret", True)),
         "get_env_vars": lambda: get_env_vars(workspace_path),
         "update_todos": lambda: update_todos(workspace_path, args.get("items", [])),
